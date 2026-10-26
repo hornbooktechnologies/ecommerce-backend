@@ -44,6 +44,7 @@
     "seed:dummy-vendor-fulfillment": "node scripts/seed-dummy-vendor-fulfillment.js",
     "vendor:fulfillment:verify": "node scripts/verify-vendor-fulfillment.js",
     "seed:dummy-promotions": "node scripts/seed-dummy-promotions.js",
+    "seed:dummy-ratings": "node scripts/seed-dummy-ratings.js",
     "promotions:order:verify": "node scripts/verify-promotion-order.js"
   },
   "dependencies": {

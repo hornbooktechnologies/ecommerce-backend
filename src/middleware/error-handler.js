@@ -1,8 +1,13 @@
 import { AppError } from "../core/errors/app-error.js";
 
 export function errorHandler(error, req, res, _next) {
+  const uploadLimit = req.originalUrl?.includes("/documents")
+    ? { code: "VENDOR_DOCUMENT_TOO_LARGE", message: "Vendor documents must be 10 MB or smaller." }
+    : req.originalUrl?.includes("/vendors/") && req.originalUrl?.includes("/logo")
+      ? { code: "VENDOR_LOGO_TOO_LARGE", message: "Vendor logos must be 2 MB or smaller." }
+      : { code: "PRODUCT_IMAGE_TOO_LARGE", message: "Product images must be 8 MB or smaller." };
   const appError = error?.type === "entity.too.large"
-    ? new AppError({ code: "PRODUCT_IMAGE_TOO_LARGE", message: "Product images must be 8 MB or smaller.", status: 413 })
+    ? new AppError({ ...uploadLimit, status: 413 })
     : error instanceof AppError
     ? error
     : new AppError({

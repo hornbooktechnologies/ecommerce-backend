@@ -79,11 +79,11 @@ test("UI configuration exposes only implemented modules even when more permissio
   ]);
 
   assert.deepEqual(ui.navigation.platform.map((item) => item.href), [
-    "/platform", "/platform/tenants"
+    "/platform", "/platform/tenants", "/platform/team"
   ]);
   assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.href), [
     "/admin", "/admin/orders", "/admin/returns", "/admin/catalog/products", "/admin/inventory", "/admin/stores",
-    "/admin/vendors", "/admin/finance", "/admin/settings/users", "/admin/settings/roles"
+    "/admin/vendors", "/admin/finance", "/admin/reports", "/admin/settings/users", "/admin/settings/roles"
   ]);
   assert.deepEqual(ui.navigation.vendor[tenantId].map((item) => item.href), [
     "/vendor", "/vendor/orders"
@@ -97,4 +97,31 @@ test("marketplace finance navigation appears only with settlement read access", 
   }]);
   assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.href), ["/admin/finance"]);
   assert.equal(ui.capabilities.admin[tenantId].includes("marketplace.settlement.manage"), true);
+});
+
+test("platform navigation follows least-privilege capabilities for support roles", () => {
+  const ui = buildUiConfiguration([{
+    roleLevel: "PLATFORM", roleKey: "platform_support_operator", tenantId: null,
+    permissions: ["platform.tenant.read", "platform.user.read"]
+  }]);
+  assert.deepEqual(ui.navigation.platform.map((item) => item.href), [
+    "/platform/tenants", "/platform/team"
+  ]);
+  assert.deepEqual(ui.capabilities.platform, ["platform.tenant.read", "platform.user.read"]);
+});
+
+test("reports navigation appears only with report access", () => {
+  const ui = buildUiConfiguration([{
+    roleLevel: "TENANT", roleKey: "analyst", tenantId, permissions: ["report.sales.read"]
+  }]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.href), ["/admin/reports"]);
+});
+
+test("product ratings navigation appears only with rating access", () => {
+  const ui = buildUiConfiguration([{
+    roleLevel: "TENANT", roleKey: "catalog_manager", tenantId,
+    permissions: ["rating.read", "rating.moderate"]
+  }]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.href), ["/admin/ratings"]);
+  assert.equal(ui.capabilities.admin[tenantId].includes("rating.moderate"), true);
 });

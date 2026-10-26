@@ -17,6 +17,24 @@ export const vendorOptionsSchema = Joi.object({
 
 export const vendorIdSchema = Joi.object({ vendorId: uuid.required() }).required();
 export const vendorOfferIdSchema = Joi.object({ vendorId: uuid.required(), offerId: uuid.required() }).required();
+export const vendorDocumentIdSchema = Joi.object({ vendorId: uuid.required(), documentId: uuid.required() }).required();
+export const uploadVendorLogoSchema = Joi.object({
+  fileName: Joi.string().trim().max(255).required()
+}).required();
+export const uploadVendorDocumentSchema = Joi.object({
+  fileName: Joi.string().trim().max(255).required(),
+  documentType: Joi.string().uppercase().valid("PAN_CARD", "GST_CERTIFICATE", "BANK_PROOF",
+    "INCORPORATION_CERTIFICATE", "ADDRESS_PROOF", "OTHER").required(),
+  documentNumber: Joi.string().trim().max(120).allow("").default(""),
+  expiresAt: Joi.string().isoDate().allow("").default("")
+}).required();
+export const vendorDocumentDecisionSchema = Joi.object({
+  decision: Joi.string().uppercase().valid("VERIFIED", "REJECTED").required(),
+  rejectionReason: Joi.string().trim().max(500).when("decision", {
+    is: "REJECTED", then: Joi.string().trim().min(3).max(500).required(),
+    otherwise: Joi.string().trim().max(500).allow("").default("")
+  })
+}).required();
 
 const vendorFields = {
   merchantCode: Joi.string().trim().uppercase().pattern(/^[A-Z0-9][A-Z0-9_-]{2,39}$/).required(),

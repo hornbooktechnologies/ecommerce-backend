@@ -1,4 +1,7 @@
 import PDFDocument from "pdfkit";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { env } from "../../config/env.js";
 
 const palette = {
   ink: "#171713", muted: "#68675f", line: "#d8d3c7", soft: "#f4f1e9",
@@ -19,7 +22,68 @@ function documentLabel(type) {
   return { TAX_INVOICE: "TAX INVOICE", CREDIT_NOTE: "CREDIT NOTE", DEBIT_NOTE: "DEBIT NOTE" }[type] || clean(type);
 }
 
+function companyName(detail) {
+  return clean(detail.seller.tradeName || detail.seller.legalName || detail.merchantName);
+}
+
+function companyInitials(detail) {
+  return companyName(detail).split(/\s+/).filter(Boolean).slice(0, 2)
+    .map((part) => part[0]?.toUpperCase()).join("") || "CO";
+}
+
+async function loadVendorLogo(logoUrl) {
+  if (!logoUrl) return null;
+  try {
+    const url = new URL(logoUrl);
+    if (url.origin !== new URL(env.apiPublicUrl).origin
+      || !url.pathname.startsWith("/media/vendor-logos/")) return null;
+    const fileName = decodeURIComponent(url.pathname.slice("/media/vendor-logos/".length));
+    if (!fileName || fileName !== path.basename(fileName)) return null;
+    return await readFile(path.join(path.resolve(env.vendorLogoDirectory), fileName));
+  } catch {
+    return null;
+  }
+}
+
+function addWatermark(doc, detail) {
+  const centerX = doc.page.width / 2;
+  const centerY = doc.page.height / 2 + 18;
+
+  doc.save();
+  doc.rotate(-24, { origin: [centerX, centerY] });
+  if (doc.vendorLogo) {
+    try {
+      doc.opacity(0.075).image(doc.vendorLogo, centerX - 78, centerY - 112, {
+        fit: [156, 104], align: "center", valign: "center"
+      });
+    } catch {
+      doc.opacity(0.06).lineWidth(2.5).strokeColor(palette.gold)
+        .roundedRect(centerX - 52, centerY - 100, 104, 86, 18).stroke();
+      doc.fillColor(palette.gold).font("Helvetica-Bold").fontSize(34)
+        .text(companyInitials(detail), centerX - 52, centerY - 72, { width: 104, align: "center" });
+    }
+  } else {
+    doc.opacity(0.06).lineWidth(2.5).strokeColor(palette.gold)
+      .roundedRect(centerX - 52, centerY - 100, 104, 86, 18).stroke();
+    doc.fillColor(palette.gold).font("Helvetica-Bold").fontSize(34)
+      .text(companyInitials(detail), centerX - 52, centerY - 72, { width: 104, align: "center" });
+  }
+
+  const name = companyName(detail);
+  doc.opacity(0.058).fillColor(palette.gold).font("Helvetica-Bold")
+    .fontSize(name.length > 32 ? 27 : 34)
+    .text(name.toUpperCase(), centerX - 230, centerY + 22, {
+      width: 460, align: "center", characterSpacing: name.length > 32 ? 1.1 : 2.2
+    });
+  doc.font("Helvetica").fontSize(9)
+    .text(documentLabel(detail.documentType), centerX - 220, centerY + 68, {
+      width: 440, align: "center", characterSpacing: 2.1
+    });
+  doc.restore();
+}
+
 function addPageBase(doc, detail) {
+  addWatermark(doc, detail);
   doc.rect(0, 0, doc.page.width, 10).fill(palette.gold);
   doc.fillColor(palette.ink).font("Helvetica-Bold").fontSize(16)
     .text(clean(detail.tenant.name), 38, 30, { width: 330 });
@@ -152,12 +216,14 @@ function addFooters(doc) {
 }
 
 export async function renderTaxDocumentPdf(detail) {
+  const watermarkLogo = await loadVendorLogo(detail.seller.logoUrl);
   return new Promise((resolve, reject) => {
     const chunks = [];
     const doc = new PDFDocument({ size: "A4", margins: { top: 28, right: 38, bottom: 60, left: 38 },
       bufferPages: true, info: { Title: `${documentLabel(detail.documentType)} ${detail.documentNumber}`,
         Author: detail.seller.legalName, Subject: `GST document for ${detail.orderNumber}` } });
     doc.invoiceDetail = detail;
+    doc.vendorLogo = watermarkLogo;
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("error", reject);
     doc.on("end", () => resolve(Buffer.concat(chunks)));

@@ -24,6 +24,10 @@ function service(overrides = {}) {
     async getVendor() { return { vendor: { id: vendorId }, stores: [], offers: [], documents: [] }; },
     async createVendor() { return { vendor: { id: vendorId }, stores: [], offers: [], documents: [] }; },
     async updateVendor() { return { vendor: { id: vendorId }, stores: [], offers: [], documents: [] }; },
+    async uploadVendorLogo() { return { vendor: { id: vendorId, logoUrl: "http://localhost/logo.png" }, stores: [], offers: [], documents: [] }; },
+    async uploadVendorDocument() { return { vendor: { id: vendorId }, stores: [], offers: [], documents: [] }; },
+    async downloadVendorDocument() { return { buffer: Buffer.from("document"), mimeType: "application/pdf", fileName: "kyc.pdf" }; },
+    async decideVendorDocument() { return { vendor: { id: vendorId }, stores: [], offers: [], documents: [] }; },
     async approveVendor() { return { vendor: { id: vendorId, status: "ACTIVE" } }; },
     async suspendVendor() { return { vendor: { id: vendorId, status: "SUSPENDED" } }; },
     async restoreVendor() { return { vendor: { id: vendorId, status: "ACTIVE" } }; },
@@ -98,4 +102,53 @@ test("vendor portal invitation normalizes account input", async () => {
   assert.equal(received.receivedVendorId, vendorId);
   assert.equal(received.input.email, "seller@example.com");
   assert.equal(received.input.roleKey, "vendor_catalog_manager");
+});
+
+test("vendor logo upload forwards the binary image", async () => {
+  let received;
+  const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+  const response = await request(app(service({ async uploadVendorLogo(receivedTenantId,
+    receivedVendorId, file) { received = { receivedTenantId, receivedVendorId, file };
+    return { vendor: { id: receivedVendorId, logoUrl: "http://localhost/logo.png" } }; } })))
+    .put(`/api/admin/v1/vendors/${vendorId}/logo?fileName=vendor-logo.png`)
+    .set("authorization", `Bearer ${token}`).set("content-type", "image/png").send(image);
+  assert.equal(response.status, 200);
+  assert.equal(received.receivedTenantId, tenantId);
+  assert.equal(received.receivedVendorId, vendorId);
+  assert.equal(received.file.originalName, "vendor-logo.png");
+  assert.deepEqual(received.file.buffer, image);
+});
+
+test("vendor KYC upload normalizes metadata and forwards the private file", async () => {
+  let received;
+  const documentId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b33";
+  const pdf = Buffer.from("%PDF-1.7\nKYC");
+  const response = await request(app(service({ async uploadVendorDocument(receivedTenantId,
+    receivedVendorId, input, file) { received = { receivedTenantId, receivedVendorId, input, file };
+    return { vendor: { id: receivedVendorId }, documents: [{ id: documentId }] }; } })))
+    .post(`/api/admin/v1/vendors/${vendorId}/documents/upload?fileName=gst.pdf&documentType=gst_certificate&documentNumber=29ABCDE1234F1Z5&expiresAt=`)
+    .set("authorization", `Bearer ${token}`).set("content-type", "application/pdf").send(pdf);
+  assert.equal(response.status, 201);
+  assert.equal(received.receivedTenantId, tenantId);
+  assert.equal(received.input.documentType, "GST_CERTIFICATE");
+  assert.equal(received.input.documentNumber, "29ABCDE1234F1Z5");
+  assert.deepEqual(received.file.buffer, pdf);
+});
+
+test("vendor KYC decision requires a rejection reason", async () => {
+  const documentId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b33";
+  const response = await request(app()).post(`/api/admin/v1/vendors/${vendorId}/documents/${documentId}/decision`)
+    .set("authorization", `Bearer ${token}`).send({ decision: "REJECTED", rejectionReason: "" });
+  assert.equal(response.status, 422);
+  assert.equal(response.body.error.code, "VALIDATION_FAILED");
+});
+
+test("vendor KYC file download remains a private attachment", async () => {
+  const documentId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b33";
+  const response = await request(app()).get(`/api/admin/v1/vendors/${vendorId}/documents/${documentId}/file`)
+    .set("authorization", `Bearer ${token}`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers["content-type"], /application\/pdf/);
+  assert.equal(response.headers["cache-control"], "private, no-store");
+  assert.match(response.headers["content-disposition"], /kyc\.pdf/);
 });

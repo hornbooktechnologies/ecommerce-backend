@@ -17,7 +17,9 @@ const schema = Joi.object({
   PASSWORD_RESET_SECRET: Joi.string().min(32).default("development-password-reset-secret-change-me"),
   ADMIN_APP_URL: Joi.string().uri({ allowRelative: false }).default("http://localhost:3000"),
   API_PUBLIC_URL: Joi.string().uri({ allowRelative: false }).allow(""),
-  PRODUCT_MEDIA_DIRECTORY: Joi.string().default("storage/product-media")
+  PRODUCT_MEDIA_DIRECTORY: Joi.string().default("storage/product-media"),
+  VENDOR_LOGO_DIRECTORY: Joi.string().default("storage/vendor-logos"),
+  VENDOR_DOCUMENT_DIRECTORY: Joi.string().default("storage/vendor-documents")
 }).unknown(true);
 
 const { value, error } = schema.validate(process.env, {
@@ -47,5 +49,7 @@ export const env = Object.freeze({
   passwordResetSecret: value.PASSWORD_RESET_SECRET,
   adminAppUrl: value.ADMIN_APP_URL.replace(/\/$/, ""),
   apiPublicUrl: (value.API_PUBLIC_URL || `http://localhost:${value.PORT}`).replace(/\/$/, ""),
-  productMediaDirectory: value.PRODUCT_MEDIA_DIRECTORY
+  productMediaDirectory: value.PRODUCT_MEDIA_DIRECTORY,
+  vendorLogoDirectory: value.VENDOR_LOGO_DIRECTORY,
+  vendorDocumentDirectory: value.VENDOR_DOCUMENT_DIRECTORY
 });

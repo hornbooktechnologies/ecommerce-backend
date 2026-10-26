@@ -10,6 +10,7 @@ import { requestContext } from "./middleware/request-context.js";
 import { createAuthRouter } from "./modules/auth/auth.routes.js";
 import { createHealthRouter } from "./modules/health/health.routes.js";
 import { createPlatformTenantRouter } from "./modules/platform-tenants/platform-tenants.routes.js";
+import { createPlatformAccessRouter } from "./modules/platform-access/platform-access.routes.js";
 import { createAccessControlRouter } from "./modules/access-control/access-control.routes.js";
 import { createCatalogRouter } from "./modules/catalog/catalog.routes.js";
 import { createInventoryRouter } from "./modules/inventory/inventory.routes.js";
@@ -29,11 +30,15 @@ import { createBulkOperationsRouter } from "./modules/bulk-operations/bulk-opera
 import { createSubstitutionsRouter } from "./modules/substitutions/substitutions.routes.js";
 import { createBundlesRouter } from "./modules/bundles/bundles.routes.js";
 import { createMarketplaceFinanceRouter } from "./modules/marketplace-finance/marketplace-finance.routes.js";
+import { createReportsRouter } from "./modules/reports/reports.routes.js";
+import { createRatingsRouter } from "./modules/ratings/ratings.routes.js";
 
 export function createApp({
   readinessCheck,
   authenticationService,
   platformTenantService,
+  platformAccessService,
+  platformAccessAuthorization,
   platformAuthorization,
   accessControlService,
   catalogService,
@@ -52,6 +57,8 @@ export function createApp({
   substitutionsService,
   bundlesService,
   marketplaceFinanceService,
+  reportsService,
+  ratingsService,
   vendorsService,
   vendorPortalService,
   vendorAccessResolver,
@@ -75,6 +82,15 @@ export function createApp({
     credentials: true
   }));
   app.use("/media/product-media", express.static(env.productMediaDirectory, {
+    dotfiles: "deny",
+    fallthrough: true,
+    immutable: env.nodeEnv === "production",
+    maxAge: env.nodeEnv === "production" ? "30d" : 0,
+    setHeaders(response) {
+      response.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    }
+  }));
+  app.use("/media/vendor-logos", express.static(env.vendorLogoDirectory, {
     dotfiles: "deny",
     fallthrough: true,
     immutable: env.nodeEnv === "production",
@@ -179,6 +195,20 @@ export function createApp({
   }));
   app.use("/api/admin/v1", createMarketplaceFinanceRouter({
     marketplaceFinanceService,
+    resolveTenant: tenantAccessResolver,
+    authorize: tenantPermissionAuthorization
+  }));
+  app.use("/api/platform/v1/access", createPlatformAccessRouter({
+    platformAccessService,
+    authorize: platformAccessAuthorization
+  }));
+  app.use("/api/admin/v1", createReportsRouter({
+    reportsService,
+    resolveTenant: tenantAccessResolver,
+    authorize: tenantPermissionAuthorization
+  }));
+  app.use("/api/admin/v1", createRatingsRouter({
+    ratingsService,
     resolveTenant: tenantAccessResolver,
     authorize: tenantPermissionAuthorization
   }));

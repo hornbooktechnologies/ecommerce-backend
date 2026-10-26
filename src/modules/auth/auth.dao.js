@@ -232,7 +232,12 @@ export async function listRoleAssignments({ userId, connection = getPrimaryPool(
         AND a.revoked_at IS NULL
         AND r.deleted_at IS NULL
         AND (
-          a.tenant_id IS NULL OR EXISTS (
+          (a.tenant_id IS NULL AND (
+            r.role_level <> 'PLATFORM' OR EXISTS (
+              SELECT 1 FROM platform_memberships pm
+               WHERE pm.user_id = a.user_id AND pm.status = 'ACTIVE'
+            )
+          )) OR EXISTS (
             SELECT 1 FROM tenant_memberships tm
             JOIN tenants t ON t.id = tm.tenant_id
             WHERE tm.user_id = a.user_id
@@ -274,6 +279,7 @@ export async function hasActivePlatformRole({ userId, connection = getPrimaryPoo
        FROM user_role_assignments a
        JOIN roles r ON r.id = a.role_id
        JOIN users u ON u.id = a.user_id
+       JOIN platform_memberships pm ON pm.user_id = a.user_id AND pm.status = 'ACTIVE'
       WHERE a.user_id = ?
         AND a.tenant_id IS NULL
         AND a.scope_type = 'PLATFORM'

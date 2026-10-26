@@ -3,6 +3,8 @@ import { createId } from "../../core/identifiers/uuid.js";
 import { hashPassword } from "../../core/security/password.js";
 import { withTransaction } from "../../database/transaction.js";
 import * as defaultDao from "./vendors.dao.js";
+import { vendorDocumentStorage } from "./vendor-document-storage.js";
+import { vendorLogoStorage } from "./vendor-logo-storage.js";
 
 function fail(code, message, status = 422, field = null) {
   throw new AppError({ code, message, status,
@@ -10,7 +12,8 @@ function fail(code, message, status = 422, field = null) {
 }
 
 export function createVendorsService({ dao = defaultDao, transaction = withTransaction,
-  passwordHasher = hashPassword } = {}) {
+  passwordHasher = hashPassword, logoStorage = vendorLogoStorage,
+  documentStorage = vendorDocumentStorage } = {}) {
   async function requireVendor(tenantId, vendorId, connection, forUpdate = false) {
     const result = await dao.getVendor({ tenantId, vendorId, connection, forUpdate });
     if (!result) fail("VENDOR_NOT_FOUND", "Vendor was not found.", 404);
@@ -65,6 +68,74 @@ export function createVendorsService({ dao = defaultDao, transaction = withTrans
       await dao.updateVendor({ tenantId, vendorId, changes, connection });
       await audit(tenantId, vendorId, "vendor.updated", { displayName: current.vendor.displayName },
         { changedFields: Object.keys(input) }, context, connection);
+      return dao.getVendor({ tenantId, vendorId, connection });
+    });
+  }
+
+  async function uploadVendorLogo(tenantId, vendorId, file, context) {
+    const current = await requireVendor(tenantId, vendorId);
+    const stored = await logoStorage.store(file);
+    try {
+      const result = await transaction(tenantId, async (connection) => {
+        await requireVendor(tenantId, vendorId, connection, true);
+        await dao.updateVendorLogo({ tenantId, vendorId, logoUrl: stored.url, connection });
+        await audit(tenantId, vendorId, "vendor.logo.updated", { logoUrl: current.vendor.logoUrl },
+          { logoUrl: stored.url, fileName: file.originalName }, context, connection);
+        return dao.getVendor({ tenantId, vendorId, connection });
+      });
+      if (current.vendor.logoUrl) await logoStorage.remove(current.vendor.logoUrl).catch(() => false);
+      return result;
+    } catch (error) {
+      await logoStorage.remove(stored.url).catch(() => false);
+      throw error;
+    }
+  }
+
+  async function uploadVendorDocument(tenantId, vendorId, input, file, context) {
+    await requireVendor(tenantId, vendorId);
+    const stored = await documentStorage.store(file);
+    const documentId = createId();
+    try {
+      return await transaction(tenantId, async (connection) => {
+        await requireVendor(tenantId, vendorId, connection, true);
+        await dao.insertVendorDocument({ document: { id: documentId, tenantId, vendorId,
+          type: input.documentType, number: input.documentNumber, expiresAt: input.expiresAt,
+          ...stored }, connection });
+        await audit(tenantId, documentId, "vendor.document.uploaded", null,
+          { vendorId, documentType: input.documentType, documentNumber: input.documentNumber || null,
+            fileName: stored.originalName, byteSize: stored.byteSize }, context, connection,
+        "VENDOR_DOCUMENT");
+        return dao.getVendor({ tenantId, vendorId, connection });
+      });
+    } catch (error) {
+      await documentStorage.remove(stored.fileKey).catch(() => false);
+      throw error;
+    }
+  }
+
+  async function downloadVendorDocument(tenantId, vendorId, documentId) {
+    const document = await dao.getVendorDocument({ tenantId, vendorId, documentId });
+    if (!document) fail("VENDOR_DOCUMENT_NOT_FOUND", "Vendor document was not found.", 404);
+    const file = await documentStorage.read(document.fileKey);
+    return { ...file, mimeType: document.mimeType || file.mimeType,
+      fileName: document.fileName || `${document.type.toLowerCase().replaceAll("_", "-")}-${document.id}` };
+  }
+
+  async function decideVendorDocument(tenantId, vendorId, documentId, input, context) {
+    return transaction(tenantId, async (connection) => {
+      await requireVendor(tenantId, vendorId, connection, true);
+      const current = await dao.getVendorDocument({ tenantId, vendorId, documentId, connection, forUpdate: true });
+      if (!current) fail("VENDOR_DOCUMENT_NOT_FOUND", "Vendor document was not found.", 404);
+      if (current.status === input.decision) {
+        fail("VENDOR_DOCUMENT_STATUS_UNCHANGED", `This document is already ${input.decision.toLowerCase()}.`, 409);
+      }
+      await dao.updateVendorDocumentDecision({ tenantId, vendorId, documentId,
+        decision: input.decision, rejectionReason: input.rejectionReason,
+        actorUserId: context.actorUserId, connection });
+      await audit(tenantId, documentId, `vendor.document.${input.decision.toLowerCase()}`,
+        { status: current.status }, { status: input.decision,
+          rejectionReason: input.decision === "REJECTED" ? input.rejectionReason : null },
+      context, connection, "VENDOR_DOCUMENT");
       return dao.getVendor({ tenantId, vendorId, connection });
     });
   }
@@ -164,7 +235,8 @@ export function createVendorsService({ dao = defaultDao, transaction = withTrans
     });
   }
 
-  return { listVendors, listVendorOptions, getVendor, createVendor, updateVendor,
+  return { listVendors, listVendorOptions, getVendor, createVendor, updateVendor, uploadVendorLogo,
+    uploadVendorDocument, downloadVendorDocument, decideVendorDocument,
     approveVendor, suspendVendor, restoreVendor, inviteVendorUser, createVendorOffer, updateVendorOffer };
 }
 
@@ -174,6 +246,10 @@ export const listVendorOptions = service.listVendorOptions;
 export const getVendor = service.getVendor;
 export const createVendor = service.createVendor;
 export const updateVendor = service.updateVendor;
+export const uploadVendorLogo = service.uploadVendorLogo;
+export const uploadVendorDocument = service.uploadVendorDocument;
+export const downloadVendorDocument = service.downloadVendorDocument;
+export const decideVendorDocument = service.decideVendorDocument;
 export const approveVendor = service.approveVendor;
 export const suspendVendor = service.suspendVendor;
 export const restoreVendor = service.restoreVendor;

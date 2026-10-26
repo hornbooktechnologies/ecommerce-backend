@@ -1,10 +1,11 @@
-import { Router } from "express";
+import { raw, Router } from "express";
 import { authenticate } from "../auth/auth.middleware.js";
 import { requirePermission, resolveTenantAccess } from "../access-control/access-control.middleware.js";
 import * as defaultService from "./vendors.service.js";
 import { createVendorsController } from "./vendors.controller.js";
 import { createVendorOfferSchema, createVendorSchema, inviteVendorUserSchema, listVendorsSchema, updateVendorOfferSchema,
-  updateVendorSchema, validateBody, validateParams, validateQuery, vendorDecisionSchema,
+  updateVendorSchema, uploadVendorDocumentSchema, uploadVendorLogoSchema, validateBody, validateParams,
+  validateQuery, vendorDecisionSchema, vendorDocumentDecisionSchema, vendorDocumentIdSchema,
   vendorIdSchema, vendorOfferIdSchema, vendorOptionsSchema } from "./vendors.validators.js";
 
 export function createVendorsRouter({ vendorsService = defaultService, resolveTenant = resolveTenantAccess,
@@ -17,6 +18,14 @@ export function createVendorsRouter({ vendorsService = defaultService, resolveTe
   router.post("/vendors", authorize("vendor.manage"), validateBody(createVendorSchema), controller.create);
   router.get("/vendors/:vendorId", authorize("vendor.read"), validateParams(vendorIdSchema), controller.get);
   router.patch("/vendors/:vendorId", authorize("vendor.manage"), validateParams(vendorIdSchema), validateBody(updateVendorSchema), controller.update);
+  router.put("/vendors/:vendorId/logo", authorize("vendor.manage"), validateParams(vendorIdSchema),
+    validateQuery(uploadVendorLogoSchema), raw({ type: () => true, limit: "3mb" }), controller.uploadLogo);
+  router.post("/vendors/:vendorId/documents/upload", authorize("vendor.manage"), validateParams(vendorIdSchema),
+    validateQuery(uploadVendorDocumentSchema), raw({ type: () => true, limit: "10mb" }), controller.uploadDocument);
+  router.get("/vendors/:vendorId/documents/:documentId/file", authorize("vendor.read"),
+    validateParams(vendorDocumentIdSchema), controller.downloadDocument);
+  router.post("/vendors/:vendorId/documents/:documentId/decision", authorize("vendor.manage"),
+    validateParams(vendorDocumentIdSchema), validateBody(vendorDocumentDecisionSchema), controller.decideDocument);
   router.post("/vendors/:vendorId/approve", authorize("vendor.manage"), validateParams(vendorIdSchema), validateBody(vendorDecisionSchema), controller.approve);
   router.post("/vendors/:vendorId/suspend", authorize("vendor.manage"), validateParams(vendorIdSchema), validateBody(vendorDecisionSchema), controller.suspend);
   router.post("/vendors/:vendorId/restore", authorize("vendor.manage"), validateParams(vendorIdSchema), validateBody(vendorDecisionSchema), controller.restore);

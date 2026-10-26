@@ -8,7 +8,8 @@ const escapeSearch = (value) => value.replace(/[\\%_]/g, (character) => `\\${cha
 function mapVendor(row) {
   return {
     id: bufferToUuid(row.id), merchantCode: row.merchant_code, displayName: row.display_name,
-    legalName: row.legal_name, status: row.status, pan: row.pan, supportEmail: row.support_email,
+    legalName: row.legal_name, logoUrl: row.logo_url || null, status: row.status, pan: row.pan,
+    supportEmail: row.support_email,
     supportPhone: row.support_phone, approvedAt: iso(row.approved_at), createdAt: iso(row.created_at),
     onboardingStatus: row.onboarding_status, businessType: row.business_type,
     contactPerson: row.contact_person, defaultCommissionPercent: number(row.default_commission_rate) === null
@@ -133,14 +134,49 @@ export async function getVendor({ tenantId, vendorId, connection = getPrimaryPoo
           AND (op.ends_at IS NULL OR op.ends_at > UTC_TIMESTAMP()) ORDER BY op.starts_at DESC LIMIT 1)
       WHERE so.tenant_id = ? AND so.merchant_id = ? AND so.deleted_at IS NULL
       ORDER BY so.created_at DESC LIMIT 100`, [tenant, vendor]),
-    connection.execute(`SELECT id, document_type, document_number, verification_status, expires_at, created_at
-      FROM vendor_documents WHERE tenant_id = ? AND merchant_id = ? ORDER BY created_at DESC`, [tenant, vendor])
+    connection.execute(`SELECT vd.id, vd.document_type, vd.document_number, vd.verification_status,
+      vd.original_file_name, vd.mime_type, vd.file_size, vd.rejection_reason, vd.expires_at,
+      vd.verified_at, vd.created_at, vd.updated_at,
+      NULLIF(TRIM(CONCAT_WS(' ', verifier.first_name, verifier.last_name)), '') AS verified_by_name
+      FROM vendor_documents vd LEFT JOIN users verifier ON verifier.id = vd.verified_by
+      WHERE vd.tenant_id = ? AND vd.merchant_id = ? ORDER BY vd.created_at DESC`, [tenant, vendor])
   ]);
   return { vendor: mapVendor(vendorRows[0]),
     stores: storesResult[0].map((row) => ({ id: bufferToUuid(row.id), code: row.code, name: row.name, status: row.status })),
     offers: offersResult[0].map(mapOffer),
-    documents: documentsResult[0].map((row) => ({ id: bufferToUuid(row.id), type: row.document_type,
-      number: row.document_number, status: row.verification_status, expiresAt: iso(row.expires_at), createdAt: iso(row.created_at) })) };
+    documents: documentsResult[0].map(mapDocument) };
+}
+
+export async function insertVendorDocument({ document, connection }) {
+  await connection.execute(`INSERT INTO vendor_documents (id, tenant_id, merchant_id, document_type,
+    document_number, file_key, original_file_name, mime_type, file_size, verification_status, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+  [uuidToBuffer(document.id), uuidToBuffer(document.tenantId), uuidToBuffer(document.vendorId),
+    document.type, document.number || null, document.fileKey, document.originalName,
+    document.mimeType, document.byteSize, document.expiresAt || null]);
+}
+
+export async function getVendorDocument({ tenantId, vendorId, documentId, connection = getPrimaryPool(),
+  forUpdate = false }) {
+  const [rows] = await connection.execute(`SELECT vd.id, vd.document_type, vd.document_number,
+    vd.file_key, vd.original_file_name, vd.mime_type, vd.file_size, vd.verification_status,
+    vd.rejection_reason, vd.expires_at, vd.verified_at, vd.created_at, vd.updated_at,
+    NULLIF(TRIM(CONCAT_WS(' ', verifier.first_name, verifier.last_name)), '') AS verified_by_name
+    FROM vendor_documents vd LEFT JOIN users verifier ON verifier.id = vd.verified_by
+    JOIN merchants m ON m.id = vd.merchant_id AND m.tenant_id = vd.tenant_id
+    WHERE vd.tenant_id = ? AND vd.merchant_id = ? AND vd.id = ?
+      AND m.merchant_type = 'VENDOR' AND m.deleted_at IS NULL LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+  [uuidToBuffer(tenantId), uuidToBuffer(vendorId), uuidToBuffer(documentId)]);
+  return rows[0] ? { ...mapDocument(rows[0]), fileKey: rows[0].file_key } : null;
+}
+
+export async function updateVendorDocumentDecision({ tenantId, vendorId, documentId, decision,
+  rejectionReason, actorUserId, connection }) {
+  await connection.execute(`UPDATE vendor_documents SET verification_status = ?, verified_by = ?,
+    verified_at = UTC_TIMESTAMP(6), rejection_reason = ?
+    WHERE tenant_id = ? AND merchant_id = ? AND id = ?`,
+  [decision, uuidToBuffer(actorUserId), decision === "REJECTED" ? rejectionReason : null,
+    uuidToBuffer(tenantId), uuidToBuffer(vendorId), uuidToBuffer(documentId)]);
 }
 
 export async function findVendorDuplicates({ tenantId, code, pan, gstin, connection }) {
@@ -210,6 +246,23 @@ export async function updateVendor({ tenantId, vendorId, changes, connection }) 
         ON DUPLICATE KEY UPDATE status = 'ACTIVE'`, [uuidToBuffer(storeId), uuidToBuffer(vendorId)]);
     }
   }
+}
+
+function mapDocument(row) {
+  return {
+    id: bufferToUuid(row.id), type: row.document_type, number: row.document_number || "",
+    status: row.verification_status, fileName: row.original_file_name || null,
+    mimeType: row.mime_type || null, byteSize: number(row.file_size),
+    rejectionReason: row.rejection_reason || "", expiresAt: iso(row.expires_at),
+    verifiedAt: iso(row.verified_at), verifiedByName: row.verified_by_name || null,
+    createdAt: iso(row.created_at), updatedAt: iso(row.updated_at)
+  };
+}
+
+export async function updateVendorLogo({ tenantId, vendorId, logoUrl, connection }) {
+  await connection.execute(`UPDATE merchants SET logo_url = ?
+    WHERE tenant_id = ? AND id = ? AND merchant_type = 'VENDOR' AND deleted_at IS NULL`,
+  [logoUrl, uuidToBuffer(tenantId), uuidToBuffer(vendorId)]);
 }
 
 export async function updateVendorStatus({ tenantId, vendorId, status, onboardingStatus, actorUserId, connection }) {

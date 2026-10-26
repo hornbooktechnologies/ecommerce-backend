@@ -88,6 +88,13 @@ async function seed() {
       );
     }
 
+    await connection.execute(
+      `INSERT INTO platform_memberships (user_id, status, invited_by, invited_at, joined_at)
+       VALUES (?, 'ACTIVE', ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+       ON DUPLICATE KEY UPDATE status = 'ACTIVE', joined_at = COALESCE(joined_at, UTC_TIMESTAMP(6))`,
+      [userId, userId]
+    );
+
     return { created, userId: bufferToUuid(userId) };
   });
 

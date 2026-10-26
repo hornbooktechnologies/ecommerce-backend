@@ -11,7 +11,13 @@ storage/
 Thumbs.db
 
 .agent/
-scripts/
+scripts/*
+!scripts/seed-dummy-ratings.js
 *migrations*
-.env.example
+!src/database/migrations/
+src/database/migrations/*
+!src/database/migrations/022_vendor_branding.sql
+!src/database/migrations/023_vendor_document_management.sql
+!src/database/migrations/024_product_ratings.sql
 package-lock.json
+.env.example

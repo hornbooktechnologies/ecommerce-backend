@@ -3,8 +3,9 @@ const navigationCatalog = {
   // Permissions decide who may see an implemented item; they must not expose
   // placeholder modules that do not have a working destination yet.
   platform: [
-    { label: "Overview", href: "/platform", icon: "overview" },
-    { label: "Tenants", href: "/platform/tenants", matchPrefix: "/platform/tenants", icon: "tenants" }
+    { label: "Overview", href: "/platform", icon: "overview", capability: "platform.dashboard.read" },
+    { label: "Tenants", href: "/platform/tenants", matchPrefix: "/platform/tenants", icon: "tenants", capability: "platform.tenant.read" },
+    { label: "Platform team", href: "/platform/team", matchPrefix: "/platform/team", icon: "users", capability: "platform.user.read" }
   ],
   admin: [
     { label: "Overview", href: "/admin", icon: "overview", capability: "dashboard.read" },
@@ -14,6 +15,7 @@ const navigationCatalog = {
     { label: "Returns", href: "/admin/returns", icon: "returns", capability: "return.read" },
     { label: "Warranties", href: "/admin/warranties", icon: "warranties", capability: "warranty.read" },
     { label: "Catalog", href: "/admin/catalog/products", matchPrefix: "/admin/catalog", icon: "catalog", capability: "catalog.product.read" },
+    { label: "Product ratings", href: "/admin/ratings", icon: "ratings", capability: "rating.read" },
     { label: "Seller pricing", href: "/admin/offers", icon: "offers", capability: "catalog.offer.read" },
     { label: "Inventory", href: "/admin/inventory", icon: "inventory", capability: "inventory.stock.read" },
     { label: "Procurement", href: "/admin/procurement", icon: "procurement", capability: "procurement.read" },
@@ -21,6 +23,7 @@ const navigationCatalog = {
     { label: "Stores", href: "/admin/stores", icon: "stores", capability: "settings.store.read" },
     { label: "Vendors", href: "/admin/vendors", icon: "vendors", capability: "vendor.read" },
     { label: "Finance", href: "/admin/finance", icon: "finance", capability: "marketplace.settlement.read" },
+    { label: "Reports", href: "/admin/reports", icon: "reports", capability: "report.sales.read" },
     { label: "Taxes", href: "/admin/settings/taxes", icon: "taxes", capability: "tax.read" },
     { label: "Team access", href: "/admin/settings/users", icon: "users", capability: "settings.user.read" },
     { label: "Roles", href: "/admin/settings/roles", icon: "access", capability: "settings.role.read" }
@@ -70,7 +73,7 @@ export function buildUiConfiguration(assignments) {
 
   return {
     navigation: {
-      platform: allowedNavigation("platform", platformCapabilities, platformAssignments.length > 0),
+      platform: allowedNavigation("platform", platformCapabilities, platformUnrestricted),
       admin: admin.navigation,
       vendor: vendor.navigation
     },
