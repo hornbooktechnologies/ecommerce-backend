@@ -19,11 +19,14 @@ export const logger = pino({
     paths: [
       "req.headers.authorization",
       "req.headers.cookie",
+      "req.headers[\"x-cart-token\"]",
+      "req.headers[\"x-wishlist-token\"]",
       "password",
       "passwordHash",
       "refreshToken",
       "accessToken",
       "accountNumber"
+      ,"keySecret", "secret_encrypted", "secret", "req.body.keySecret"
     ],
     censor: "[REDACTED]"
   }

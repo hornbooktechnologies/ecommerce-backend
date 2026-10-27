@@ -230,7 +230,7 @@ export async function insertReturnRequest({ record, connection }) {
      VALUES (?, ?, ?, ?, ?, ?, 'REQUESTED', ?, ?, ?, ?)`,
     [uuidToBuffer(record.id), uuidToBuffer(record.tenantId), uuidToBuffer(record.orderId),
       uuidToBuffer(record.sellerOrderId), record.number, record.type, record.reasonCode,
-      record.customerComments || null, record.notes || null, uuidToBuffer(record.actorUserId)]
+      record.customerComments || null, record.notes || null, record.actorUserId ? uuidToBuffer(record.actorUserId) : null]
   );
 }
 

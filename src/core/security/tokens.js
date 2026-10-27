@@ -13,7 +13,7 @@ export function createAccessToken({ userId, sessionId }) {
     {
       algorithm: "HS256",
       audience,
-      expiresIn: "15m",
+      expiresIn: "1h",
       issuer,
       jwtid: randomUUID(),
       subject: userId

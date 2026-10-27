@@ -268,15 +268,25 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
       }
       const taxTotal = lines.reduce((total, line) => total.plus(line.taxTotal), new Decimal(0));
       const grandTotal = subtotal.minus(discountTotal).plus(shippingTotal);
+      // Trusted internal callers share this calculation for review and creation.
+      const review = { currency: store.currency, subtotal: subtotal.toFixed(4), discountTotal: discountTotal.toFixed(4),
+        shippingTotal: shippingTotal.toFixed(4), taxTotal: taxTotal.toFixed(4), grandTotal: grandTotal.toFixed(4),
+        promotionDiscount: promotionDiscount.toFixed(4),
+        items: lines.map((line) => ({ offerId: line.offerId, productName: line.productName, variantName: line.variantName,
+          sku: line.sku, quantity: line.quantity, unitPrice: new Decimal(line.salePrice).toFixed(4),
+          lineTotal: line.lineTotal.toFixed(4), taxTotal: line.taxTotal.toFixed(4), soldByWeight: line.soldByWeight })) };
+      if (context.preview) return review;
+      if (context.verifyReview) context.verifyReview(review);
+      const source = context.source === "STOREFRONT" ? "STOREFRONT" : "MANUAL";
       const orderNumber = await dao.nextDocumentNumber({ tenantId, storeId: store.id,
         type: "ORDER", connection });
       if (!orderNumber) fail("ORDER_SEQUENCE_MISSING", "Order numbering is not configured for this store.", 409);
       const orderId = createId();
       const address = { ...input.shippingAddress, countryCode: "IN",
-        contactName: `${input.customer.firstName} ${input.customer.lastName || ""}`.trim(),
+        contactName: input.shippingAddress.contactName || `${input.customer.firstName} ${input.customer.lastName || ""}`.trim(),
         phone: input.customer.phone || null };
       await dao.insertOrder({ order: {
-        id: orderId, tenantId, storeId: store.id, customerId: customer.id,
+        id: orderId, tenantId, storeId: store.id, customerId: customer.id, source,
         deliverySlotId: deliverySlot?.id || null, number: orderNumber, currency: store.currency,
         subtotal: subtotal.toFixed(4), discountTotal: discountTotal.toFixed(4),
         shippingTotal: shippingTotal.toFixed(4), taxTotal: taxTotal.toFixed(4),
@@ -357,20 +367,20 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
       }
       await dao.insertStatusHistory({ entry: {
         id: createId(), tenantId, orderId, previousStatus: null, newStatus: "PLACED",
-        reasonCode: "MANUAL_ENTRY", notes: input.internalNotes || null, actorUserId: context.actorUserId
+        reasonCode: source === "STOREFRONT" ? "STOREFRONT_CHECKOUT" : "MANUAL_ENTRY", notes: input.internalNotes || null, actorUserId: context.actorUserId
       }, connection });
       await dao.insertAudit({ audit: {
-        id: createId(), tenantId, actorUserId: context.actorUserId, action: "ORDER_CREATED",
+        id: createId(), tenantId, actorUserId: context.actorUserId, actorType: source === "STOREFRONT" ? "CUSTOMER" : "USER", action: "ORDER_CREATED",
         orderId, requestId: context.requestId, ipAddress: context.ipAddress || "127.0.0.1",
         userAgent: context.userAgent, beforeData: null,
-        afterData: { orderNumber, source: "MANUAL", grandTotal: grandTotal.toFixed(4),
+        afterData: { orderNumber, source, customerId: customer.id, grandTotal: grandTotal.toFixed(4),
           itemCount: lines.length, sellerCount: groups.size,
           promotionId: promotion?.id || null, couponCode: promotion?.coupon?.code || null,
           promotionDiscount: promotionDiscount.toFixed(4) }
       }, connection });
       await dao.insertOutbox({ event: {
         id: createId(), tenantId, orderId, type: "order.created",
-        payload: { orderId, orderNumber, source: "MANUAL", grandTotal: grandTotal.toFixed(4) }
+        payload: { orderId, orderNumber, source, grandTotal: grandTotal.toFixed(4) }
       }, connection });
       return dao.getOrder({ tenantId, orderId, connection });
     });
@@ -393,6 +403,9 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
       const sellerOrder = await dao.findSellerOrderForFulfillment({ tenantId, orderId,
         sellerOrderId: input.sellerOrderId, connection });
       if (!sellerOrder) fail("SELLER_ORDER_NOT_FOUND", "The seller order was not found.", 404, "sellerOrderId");
+      if (sellerOrder.paymentMethod === "ONLINE_TEST" && sellerOrder.paymentStatus !== "PAID") {
+        fail("ONLINE_PAYMENT_PENDING", "Verify the online test payment before allocating stock.", 409);
+      }
       if (scope.merchantId && sellerOrder.merchantId !== scope.merchantId) {
         fail("SELLER_ORDER_NOT_FOUND", "The seller order was not found.", 404, "sellerOrderId");
       }
@@ -593,6 +606,9 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
     return transaction(tenantId, async (connection) => {
       const order = await dao.findOrderForUpdate({ tenantId, orderId, connection });
       if (!order) fail("ORDER_NOT_FOUND", "Order was not found.", 404);
+      if (input.status !== "CANCELLED" && order.paymentMethod === "ONLINE_TEST" && order.paymentStatus !== "PAID") {
+        fail("ONLINE_PAYMENT_PENDING", "Verify the online test payment before confirming or fulfilling this order.", 409);
+      }
       if (!(transitions[order.status] || []).includes(input.status)) {
         fail("INVALID_ORDER_TRANSITION",
           `${order.status.toLowerCase()} orders cannot move to ${input.status.toLowerCase()}.`, 409, "status");

@@ -22,6 +22,11 @@ export function createCustomersService({ dao = defaultDao, transaction = withTra
     await transaction(tenantId, async (connection) => {
       const current = await dao.getCustomer({ tenantId, customerId, connection, forUpdate: true });
       if (!current) throw notFound();
+      if (current.email.toLowerCase() !== input.email.toLowerCase() && await dao.hasStorefrontAccount?.({ tenantId, customerId, connection })) {
+        throw new AppError({ code: "VERIFIED_CUSTOMER_EMAIL_LOCKED", status: 422,
+          message: "This customer has a verified storefront account. Its email cannot be changed here.",
+          details: [{ field: "email", message: "Keep the verified account email unchanged." }] });
+      }
       if (!await dao.updateCustomer({ tenantId, customerId, input, connection })) throw notFound();
       await dao.insertAudit({ audit: { id: createId(), tenantId, actorUserId: context.actorUserId,
         action: "CUSTOMER_UPDATED", entityId: customerId, requestId: context.requestId,

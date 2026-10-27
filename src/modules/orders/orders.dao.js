@@ -18,6 +18,7 @@ function orderRow(row) {
     externalReference: row.external_reference,
     status: row.status,
     paymentStatus: row.payment_status,
+    paymentMethod: row.payment_method || null,
     fulfillmentStatus: row.fulfillment_status,
     currency: row.currency,
     subtotal: number(row.subtotal),
@@ -432,14 +433,14 @@ export async function insertOrder({ order, connection }) {
        subtotal, discount_total, shipping_total, tax_total, rounding_total, grand_total,
        billing_address_snapshot, shipping_address_snapshot, customer_snapshot, customer_notes,
        internal_notes, placed_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, 'MANUAL', 'PLACED', 'UNPAID', 'UNFULFILLED', ?, 1,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'PLACED', 'UNPAID', 'UNFULFILLED', ?, 1,
        ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), ?)`,
     [uuidToBuffer(order.id), uuidToBuffer(order.tenantId), uuidToBuffer(order.storeId),
       uuidToBuffer(order.customerId), order.deliverySlotId ? uuidToBuffer(order.deliverySlotId) : null,
-      order.number, order.currency, order.subtotal, order.discountTotal, order.shippingTotal,
+      order.number, order.source || "MANUAL", order.currency, order.subtotal, order.discountTotal, order.shippingTotal,
       order.taxTotal, order.grandTotal, JSON.stringify(order.billingAddress),
       JSON.stringify(order.shippingAddress), JSON.stringify(order.customerSnapshot),
-      order.customerNotes || null, order.internalNotes || null, uuidToBuffer(order.actorUserId)]
+      order.customerNotes || null, order.internalNotes || null, order.actorUserId ? uuidToBuffer(order.actorUserId) : null]
   );
 }
 
@@ -517,7 +518,7 @@ export async function listOrders({ tenantId, filters, connection = getPrimaryPoo
   const [rowsResult, countResult, summaryResult] = await Promise.all([
     connection.execute(
       `SELECT co.id, co.order_number, co.source, co.external_reference, co.status,
-              co.payment_status, co.fulfillment_status, co.currency, co.subtotal,
+              co.payment_status, co.payment_method, co.fulfillment_status, co.currency, co.subtotal,
               co.discount_total, co.shipping_total, co.tax_total, co.rounding_total,
               co.grand_total, co.refunded_total, co.placed_at, co.created_at,
               co.updated_at, co.version, s.name AS store_name,
@@ -672,11 +673,12 @@ export async function getOrder({ tenantId, orderId, connection = getPrimaryPool(
 
 export async function findOrderForUpdate({ tenantId, orderId, connection }) {
   const [rows] = await connection.execute(
-    `SELECT id, status, version FROM customer_orders
+    `SELECT id, status, version, payment_method, payment_status FROM customer_orders
       WHERE tenant_id = ? AND id = ? LIMIT 1 FOR UPDATE`,
     [uuidToBuffer(tenantId), uuidToBuffer(orderId)]
   );
   return rows[0] ? { id: bufferToUuid(rows[0].id), status: rows[0].status,
+    paymentMethod: rows[0].payment_method, paymentStatus: rows[0].payment_status,
     version: Number(rows[0].version) } : null;
 }
 
@@ -793,7 +795,7 @@ export async function insertStatusHistory({ entry, connection }) {
       entry.sellerOrderId ? uuidToBuffer(entry.sellerOrderId) : null,
       entry.type || "ORDER", entry.previousStatus, entry.newStatus,
       entry.reasonCode || null, entry.notes || null,
-      uuidToBuffer(entry.actorUserId)]
+      entry.actorUserId ? uuidToBuffer(entry.actorUserId) : null]
   );
 }
 
@@ -801,8 +803,8 @@ export async function insertAudit({ audit, connection }) {
   await connection.execute(
     `INSERT INTO audit_logs (id, tenant_id, actor_user_id, actor_type, action, entity_type,
        entity_id, request_id, ip_address, user_agent, before_data, after_data)
-     VALUES (?, ?, ?, 'USER', ?, 'CUSTOMER_ORDER', ?, ?, INET6_ATON(?), ?, ?, ?)`,
-    [uuidToBuffer(audit.id), uuidToBuffer(audit.tenantId), uuidToBuffer(audit.actorUserId),
+     VALUES (?, ?, ?, ?, ?, 'CUSTOMER_ORDER', ?, ?, INET6_ATON(?), ?, ?, ?)`,
+    [uuidToBuffer(audit.id), uuidToBuffer(audit.tenantId), audit.actorUserId ? uuidToBuffer(audit.actorUserId) : null, audit.actorType || "USER",
       audit.action, uuidToBuffer(audit.orderId), audit.requestId, audit.ipAddress,
       audit.userAgent, JSON.stringify(audit.beforeData), JSON.stringify(audit.afterData)]
   );
@@ -960,7 +962,7 @@ export async function getFulfillmentOptions({ tenantId, orderId, connection = ge
 export async function findSellerOrderForFulfillment({ tenantId, orderId, sellerOrderId, connection }) {
   const [sellerRows] = await connection.execute(
     `SELECT so.id, so.merchant_id, so.status, so.fulfillment_status,
-            co.status AS order_status, co.store_id, co.customer_id,
+            co.status AS order_status, co.payment_method, co.payment_status, co.store_id, co.customer_id,
             EXISTS(SELECT 1 FROM fulfillments f WHERE f.seller_order_id = so.id
               AND f.status <> 'CANCELLED') AS has_fulfillment
        FROM seller_orders so JOIN customer_orders co ON co.id = so.customer_order_id
@@ -996,6 +998,7 @@ export async function findSellerOrderForFulfillment({ tenantId, orderId, sellerO
   const row = sellerRows[0];
   return { id: bufferToUuid(row.id), merchantId: bufferToUuid(row.merchant_id),
     status: row.status, fulfillmentStatus: row.fulfillment_status, orderStatus: row.order_status,
+    paymentMethod: row.payment_method, paymentStatus: row.payment_status,
     hasFulfillment: Boolean(row.has_fulfillment),
     storeId: bufferToUuid(row.store_id), customerId: row.customer_id ? bufferToUuid(row.customer_id) : null,
     items: [...itemRows.map((item) => ({ id: bufferToUuid(item.id), allocationId: bufferToUuid(item.id),

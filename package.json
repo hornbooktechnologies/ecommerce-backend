@@ -45,6 +45,7 @@
     "vendor:fulfillment:verify": "node scripts/verify-vendor-fulfillment.js",
     "seed:dummy-promotions": "node scripts/seed-dummy-promotions.js",
     "seed:dummy-ratings": "node scripts/seed-dummy-ratings.js",
+    "seed:hornbook-storefront-catalog": "node src/database/seeds/seed-hornbook-storefront-catalog.js",
     "promotions:order:verify": "node scripts/verify-promotion-order.js"
   },
   "dependencies": {
@@ -56,6 +57,7 @@
     "joi": "^18.0.1",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.15.3",
+    "nodemailer": "^10.2.1",
     "pdfkit": "^0.20.2",
     "pino": "^10.1.0",
     "pino-http": "^11.0.0",

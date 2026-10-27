@@ -32,6 +32,13 @@ import { createBundlesRouter } from "./modules/bundles/bundles.routes.js";
 import { createMarketplaceFinanceRouter } from "./modules/marketplace-finance/marketplace-finance.routes.js";
 import { createReportsRouter } from "./modules/reports/reports.routes.js";
 import { createRatingsRouter } from "./modules/ratings/ratings.routes.js";
+import { createStorefrontRouter } from "./modules/storefront/storefront.routes.js";
+import { createStorefrontWishlistRouter } from "./modules/storefront-wishlist/storefront-wishlist.routes.js";
+import { createHomepageRouter } from "./modules/homepage/homepage.routes.js";
+import { createCustomerAccountsRouter } from "./modules/customer-accounts/customer-accounts.routes.js";
+import { createStorefrontCartRouter } from "./modules/storefront-cart/storefront-cart.routes.js";
+import { createStorefrontCheckoutRouter } from "./modules/storefront-checkout/storefront-checkout.routes.js";
+import { createPaymentsRouter } from "./modules/payments/payments.routes.js";
 
 export function createApp({
   readinessCheck,
@@ -59,6 +66,14 @@ export function createApp({
   marketplaceFinanceService,
   reportsService,
   ratingsService,
+  storefrontService,
+  homepageService,
+  homepageSectionsService,
+  customerAccountsService,
+  storefrontCartService,
+  storefrontWishlistService,
+  storefrontCheckoutService,
+  paymentsService,
   vendorsService,
   vendorPortalService,
   vendorAccessResolver,
@@ -103,7 +118,15 @@ export function createApp({
   app.use(express.json({ limit: "6mb" }));
 
   app.use("/health", createHealthRouter({ readinessCheck }));
+  app.use("/api/storefront/v1", createStorefrontRouter({ service: storefrontService }));
+  app.use("/api/storefront/v1", createCustomerAccountsRouter({ service: customerAccountsService }));
+  app.use("/api/storefront/v1", createStorefrontCartRouter({ service: storefrontCartService }));
+  app.use("/api/storefront/v1", createStorefrontWishlistRouter({ service: storefrontWishlistService }));
+  app.use("/api/storefront/v1", createStorefrontCheckoutRouter({ service: storefrontCheckoutService }));
   app.use("/api/admin/v1/auth", createAuthRouter({ authenticationService }));
+  app.use("/api/admin/v1", createPaymentsRouter({ service: paymentsService, resolveTenant: tenantAccessResolver }));
+  app.use("/api/admin/v1", createHomepageRouter({ service: homepageService, sectionsService: homepageSectionsService,
+    resolveTenant: tenantAccessResolver, authorize: tenantPermissionAuthorization }));
   app.use("/api/platform/v1/tenants", createPlatformTenantRouter({
     tenantService: platformTenantService,
     authorizePlatform: platformAuthorization

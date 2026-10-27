@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import { getPrimaryPool, closePrimaryPool } from "../src/database/pool-factory.js";
+import { createId, uuidToBuffer } from "../src/core/identifiers/uuid.js";
+import * as accountDao from "../src/modules/customer-accounts/customer-accounts.dao.js";
+import { createCustomerAccountsService, digest } from "../src/modules/customer-accounts/customer-accounts.service.js";
+import { createStorefrontCartService } from "../src/modules/storefront-cart/storefront-cart.service.js";
+import { listProducts, cartOffers } from "../src/modules/storefront/storefront.dao.js";
+
+const connection = await getPrimaryPool().getConnection();
+try {
+  const scopedAccounts = Object.fromEntries(Object.entries(accountDao).map(([name, fn]) => [name, (input) => fn({ ...input, connection })]));
+  const mail = [];
+  const transaction = async (_id, fn) => fn(connection);
+  const accounts = createCustomerAccountsService({ dao: scopedAccounts, transaction, mailer: { ready() {}, send: async (value) => mail.push(value) } });
+  const service = createStorefrontCartService({ accountDao: scopedAccounts, transaction });
+  const scope = await accounts.scope({ tenantCode: "HORNBOOK_RETAIL", storeCode: "MAIN" });
+  await connection.beginTransaction();
+  const list = await listProducts({ scope, filters: { page: 1, pageSize: 50, inStock: true }, connection });
+  const products = await cartOffers({ scope, offerIds: list.items.map((p) => p.offerId), connection });
+  const product = products.find((p) => p.availableQuantity >= p.minimumOrderQuantity * 2 && (!p.maximumOrderQuantity || p.maximumOrderQuantity >= p.minimumOrderQuantity * 2));
+  assert.ok(product, "Expected a stocked Hornbook offer");
+  const offerId = product.offerId;
+  let bag = await service.operate(scope, {}, "sync");
+  const guestToken = bag.guestToken;
+  bag = await service.operate(scope, { guestToken }, "update", { offerId, quantity: product.minimumOrderQuantity, cartKey: bag.cartKey, revision: bag.revision });
+  assert.equal(bag.items[0].product.sku, product.sku);
+  await assert.rejects(service.operate(scope, { guestToken }, "update", { offerId, quantity: 1000000, cartKey: bag.cartKey, revision: bag.revision }), { status: 422 });
+  await assert.rejects(service.operate(scope, { guestToken }, "update", { offerId, quantity: 0, revision: 0 }), { status: 409 });
+  const email = `cart-${createId()}@example.invalid`;
+  await accounts.register(scope, { email, firstName: "Cart", lastName: "Rollback" });
+  await accounts.verify(scope, { token: mail[0].token, newPassword: "VerifyCart-123!" });
+  const login = await accounts.login(scope, { email, password: "VerifyCart-123!" });
+  const identity = { guestToken, sessionToken: login.sessionToken };
+  bag = await service.operate(scope, identity, "sync");
+  assert.equal(bag.mode, "customer"); assert.equal(bag.items.length, 1); assert.equal(bag.merged, true);
+  const again = await service.operate(scope, identity, "sync"); assert.equal(again.items[0].quantity, product.minimumOrderQuantity);
+  const otherDevice = await service.operate(scope, { sessionToken: login.sessionToken }, "sync"); assert.equal(otherDevice.items.length, 1);
+  assert.equal((await service.operate(scope, {}, "sync")).items.length, 0);
+  await assert.rejects(service.operate({ ...scope, tenantId: createId() }, identity, "sync"), { status: 401 });
+  // Verify persisted bags use the current price, not a price saved with the line.
+  await connection.execute("UPDATE offer_prices SET sale_price = sale_price + 1 WHERE tenant_id = ? AND offer_id = ?", [uuidToBuffer(scope.tenantId), uuidToBuffer(offerId)]);
+  bag = await service.operate(scope, { sessionToken: login.sessionToken }, "sync");
+  assert.equal(bag.items[0].product.price, product.price + 1);
+  await connection.execute("UPDATE seller_offers SET status = 'INACTIVE' WHERE tenant_id = ? AND id = ?", [uuidToBuffer(scope.tenantId), uuidToBuffer(offerId)]);
+  bag = await service.operate(scope, { sessionToken: login.sessionToken }, "sync"); assert.equal(bag.hasIssues, true); assert.equal(bag.items[0].product, null);
+  bag = await service.operate(scope, { sessionToken: login.sessionToken }, "update", { offerId, quantity: 0, cartKey: bag.cartKey, revision: bag.revision }); assert.equal(bag.items.length, 0);
+  await connection.execute("UPDATE customer_sessions SET expires_at = UTC_TIMESTAMP(6) WHERE token_hash = ?", [digest(login.sessionToken)]);
+  await assert.rejects(service.operate(scope, identity, "sync"), { status: 401 });
+  await connection.rollback();
+  assert.equal(await accountDao.findAccount({ ...scope, email, connection }), null);
+  process.stdout.write("PASS: MariaDB cart persistence, exact offer lookup, current pricing, unavailable items, revisions, guest merge replay protection, customer isolation and expiry. All test changes rolled back.\n");
+} finally { await connection.rollback(); connection.release(); await closePrimaryPool(); }

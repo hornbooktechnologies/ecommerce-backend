@@ -21,6 +21,7 @@ const navigationCatalog = {
     { label: "Procurement", href: "/admin/procurement", icon: "procurement", capability: "procurement.read" },
     { label: "Bulk operations", href: "/admin/bulk-operations", icon: "bulk", capability: "bulk.read" },
     { label: "Stores", href: "/admin/stores", icon: "stores", capability: "settings.store.read" },
+    { label: "Homepage", href: "/admin/homepage", icon: "homepage", capability: "settings.store.read" },
     { label: "Vendors", href: "/admin/vendors", icon: "vendors", capability: "vendor.read" },
     { label: "Finance", href: "/admin/finance", icon: "finance", capability: "marketplace.settlement.read" },
     { label: "Reports", href: "/admin/reports", icon: "reports", capability: "report.sales.read" },

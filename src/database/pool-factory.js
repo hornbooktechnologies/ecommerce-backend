@@ -21,6 +21,14 @@ export function getPrimaryPool() {
       bigNumberStrings: true,
       namedPlaceholders: false
     });
+    // mysql2's timezone option controls JS date conversion, not MariaDB's session
+    // clock. Queue this before the connection's first application query so
+    // CURRENT_TIMESTAMP defaults and explicit UTC_TIMESTAMP writes agree.
+    primaryPool.on("connection", (connection) => {
+      connection.query("SET time_zone = '+00:00'", (error) => {
+        if (error) connection.destroy();
+      });
+    });
   }
 
   return primaryPool;

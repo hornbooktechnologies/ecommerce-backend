@@ -186,7 +186,15 @@ export async function updateCustomer({ tenantId, customerId, input, connection }
       input.type, input.companyName || null, input.gstin || null, input.status, input.notes || null,
       uuidToBuffer(tenantId), uuidToBuffer(customerId)]
   );
+  if (input.status !== "ACTIVE") {
+    await connection.execute("DELETE FROM customer_sessions WHERE tenant_id = ? AND customer_id = ?", [uuidToBuffer(tenantId), uuidToBuffer(customerId)]);
+  }
   return result.affectedRows === 1;
+}
+
+export async function hasStorefrontAccount({ tenantId, customerId, connection }) {
+  const [rows] = await connection.execute("SELECT customer_id FROM customer_accounts WHERE tenant_id = ? AND customer_id = ?", [uuidToBuffer(tenantId), uuidToBuffer(customerId)]);
+  return rows.length > 0;
 }
 
 export async function insertAudit({ audit, connection }) {
