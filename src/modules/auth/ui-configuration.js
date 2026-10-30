@@ -5,6 +5,7 @@ const navigationCatalog = {
   platform: [
     { label: "Overview", href: "/platform", icon: "overview", capability: "platform.dashboard.read" },
     { label: "Tenants", href: "/platform/tenants", matchPrefix: "/platform/tenants", icon: "tenants", capability: "platform.tenant.read" },
+    { label: "Notification deliveries", href: "/platform/notification-deliveries", icon: "jobs", capability: "platform.notification.read" },
     { label: "Platform team", href: "/platform/team", matchPrefix: "/platform/team", icon: "users", capability: "platform.user.read" }
   ],
   admin: [
@@ -44,10 +45,21 @@ function permissionsFor(assignments) {
   return [...new Set(assignments.flatMap((assignment) => assignment.permissions || []))].sort();
 }
 
+const adminGroups = [
+  ["daily", "Daily operations", ["overview", "orders", "customers", "returns", "warranties"]],
+  ["products", "Products & stock", ["catalog", "offers", "inventory", "procurement", "bulk"]],
+  ["storefront", "Storefront & marketing", ["homepage", "promotions", "ratings"]],
+  ["business", "Business management", ["stores", "vendors", "finance", "reports"]],
+  ["settings", "Settings", ["taxes", "users", "access"]]
+];
+
 function allowedNavigation(area, capabilities, unrestricted = false) {
   return navigationCatalog[area]
     .filter((item) => unrestricted || !item.capability || capabilities.includes(item.capability))
-    .map((item) => ({ ...item }));
+    .map((item) => {
+      const group = area === "admin" ? adminGroups.find((entry) => entry[2].includes(item.icon)) : null;
+      return { ...item, ...(group ? { group: { id: group[0], label: group[1], order: adminGroups.indexOf(group) } } : {}) };
+    });
 }
 
 function tenantContexts(assignments, roleLevel, area) {

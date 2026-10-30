@@ -1,3 +1,4 @@
+import { enqueueWarrantyInbox } from "../notifications/warranty-inbox.events.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 
@@ -289,6 +290,7 @@ export async function insertClaimEvent({ event, connection }) {
       event.previousStatus || null, event.newStatus, event.notes || null,
       event.metadata ? JSON.stringify(event.metadata) : null, uuidToBuffer(event.createdBy)]
   );
+  await enqueueWarrantyInbox({ tenantId: event.tenantId, eventId: event.id, connection });
 }
 
 export async function insertAudit({ audit, connection }) {

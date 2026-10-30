@@ -1,5 +1,6 @@
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import { enqueuePlatformTenantInbox } from "../notifications/platform-tenant-inbox.events.js";
 
 function iso(value) {
   return value instanceof Date ? value.toISOString() : value;
@@ -442,6 +443,10 @@ export async function insertAuditLog({ audit, connection }) {
       audit.metadata ? JSON.stringify(audit.metadata) : null
     ]
   );
+  if (["platform.tenant.created", "platform.tenant.activated",
+    "platform.tenant.suspended", "platform.tenant.restored"].includes(audit.action)) {
+    await enqueuePlatformTenantInbox({ tenantId: audit.tenantId, auditId: audit.id, connection });
+  }
 }
 
 export async function insertOutboxEvent({ event, connection }) {

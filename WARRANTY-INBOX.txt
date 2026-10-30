@@ -1,0 +1,49 @@
+COMMERCE OS - WARRANTY CLAIM INBOX UPDATES
+29 October 2026
+
+COVERAGE
+Existing warranty claim events now enqueue in-app notifications:
+- Opened: eligible customer plus active tenant staff with warranty.read.
+- Assigned/reassigned: only the assigned staff member, if currently eligible
+  with warranty.read. This internal update is not sent to the customer.
+- Diagnosed, resolved and closed: eligible customer plus warranty.read staff.
+No vendor/platform notifications, emails, push or customer claim form added.
+
+SOURCE AND TRANSACTION
+The existing warranty DAO inserts its claim event, then queues inbox events
+using the same connection. Claim state, history, audit and notifications remain
+inside the source transaction; a rollback removes the event as well.
+The source lookup reads the stored event, claim, registration, order item and
+order with tenant-scoped joins. Unsupported event/status pairs do not notify.
+The unique key uses the claim event ID plus audience. Replaying that event
+cannot create a duplicate alert. A separately recorded reassignment is a new
+event, even if an operator repeats the same assignment command.
+
+ACCESS / MESSAGING
+Customer notifications require an eligible verified customer account and a
+registration customer matching the order owner. Inbox queries recheck order,
+store and registration ownership. Staff access requires current warranty.read.
+Missing, moved or foreign claim sources cannot be read or marked through inbox.
+Messages contain the claim number and generic lifecycle wording only: no
+issue text, diagnosis notes, resolution notes, customer contact or assignee name.
+Resolution and closure explicitly do not confirm money paid or goods dispatched.
+
+DESTINATIONS
+Admin: "Open warranties" opens the existing Warranties module; select Claim
+queue and search the claim number. It does not auto-open a claim dialog.
+Customer: "View order" opens the existing related order detail page. There is
+no new self-service warranty detail view; messages direct customers to contact
+the store for case-specific details. Both inboxes use a decorative shield icon
+beside the visible warranty text; existing layout and interaction are retained.
+
+ACTIVATION
+Uses migration 034 and the existing worker: npm run notifications:inbox
+No additional migration or dependency is required. Restart API if not running
+under its development watcher. No worker was started by this implementation.
+New lifecycle activity only; historical warranty events are not backfilled.
+
+VERIFICATION
+Source and schema references reviewed only. Lint, tests and builds skipped at
+the user's request. No claims were created/transitioned and no notification
+worker or delivery batch was run. Runtime, isolation, duplicate/rollback and
+browser verification remain pending.

@@ -34,6 +34,11 @@ export function verifySignature(orderId, paymentId, signature, secret) {
   return timingSafeEqual(expected, Buffer.from(signature, "hex"));
 }
 
+export function verifyWebhookSignature(rawBody, signature, secret) {
+  if (!Buffer.isBuffer(rawBody) || !/^[a-f0-9]{64}$/i.test(signature || "")) return false;
+  return timingSafeEqual(createHmac("sha256", secret).update(rawBody).digest(), Buffer.from(signature, "hex"));
+}
+
 export function createRazorpayGateway({ fetcher = fetch } = {}) {
   async function request(account, path, body) {
     if (!/^rzp_test_[A-Za-z0-9]+$/.test(account.keyId)) paymentError("TEST_KEYS_REQUIRED", "Only Razorpay Test Mode keys are accepted.", 422);

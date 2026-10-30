@@ -1,0 +1,65 @@
+COMMERCE OS - ADMIN LOW-STOCK ALERTS
+29 October 2026
+
+IMPLEMENTED
+A separate Node monitor scans configured inventory balances and queues admin
+inbox events. It uses MariaDB 10.4-compatible locking, DAO queries, Decimal
+arithmetic, and the existing inbox worker. No Redis, Docker or provider added.
+
+RULE
+Available balance = on hand - reserved - quarantined.
+Low stock = available balance <= a non-null reorder point (including zero).
+Set this policy in Inventory > a balance's Policy action. Only active tenant,
+store, merchant, warehouse, offer and variant scopes are eligible. Deleted or
+archived products and bundle balance rows are excluded. Components may alert.
+Product publication is otherwise not required; this is warehouse planning,
+not a storefront visibility or lot-expiry availability calculation.
+
+One alert per OBSERVED low-stock episode for each balance. Additional changes
+while it remains low do not repeat the alert. Recovery above the threshold,
+clearing the policy or an ineligible scope re-arms it when observed. A later
+low-stock observation creates a new episode. Restarting the monitor retains
+episode state. If nobody is eligible to receive it, the balance stays armed.
+The initial scan alerts on CURRENT low balances; it does not replay history.
+Changes occurring and reversing between scans may not be observed.
+
+RECIPIENTS / HISTORY
+Only active tenant-scoped staff with inventory.stock.read at detection time
+are snapshotted. Customers, vendors and platform users do not receive these
+events. Current permissions and source scope are checked again on every inbox
+read/count/mutation. Historical alerts remain after recovery unless the source
+becomes unavailable. Reading an alert does not replenish stock or re-arm it.
+The message names product, SKU, seller, warehouse, available and reorder level.
+Open inventory opens the existing listing, not a preselected record or modal.
+The UI/UX pass keeps a visible action label and a decorative inventory icon.
+
+INSTALL / RUN (backend repository)
+1. Apply migration 035 using the normal migration command: npm run db:migrate
+2. Restart the API if not using the existing development watcher.
+3. Run npm run notifications:stock in a separate terminal.
+4. Keep npm run notifications:inbox running separately to deliver queued events.
+
+The continuous monitor scans 100 balances per batch, one short transaction per
+balance, with 1 second between batches and 30 seconds between completed passes.
+Detection/delivery is eventually consistent; large inventories take longer.
+An individual failure rolls back its state and event, then is retried next pass.
+Concurrent scans lock the balance before state, preventing duplicate episodes.
+No source stock, order, policy or payment data is modified by the monitor.
+
+Optional commands:
+  npm run notifications:stock:once    One batch of up to 100, not a full sweep.
+  npm run notifications:stock:status  Read-only persisted episode summary.
+The status totals are not live stock counts and lastTransition is not a heartbeat.
+State is stored in inventory_alert_states. Do not delete it to clear unread
+notifications: that would permit repeated alerts. Use normal inbox read actions.
+
+LIMITATIONS / VERIFICATION
+Lint, tests and build were skipped at the user's request. Source review only;
+runtime, transaction rollback, multi-worker and browser checks remain pending.
+No scan or delivery batch was executed for verification, no fixture stock was
+created, and no unattended worker was started by this implementation.
+Activation status is reported separately in the handoff; the commands above
+must be completed before new alerts can be delivered.
+Only the configured primary database is scanned. Future sharded deployments
+need per-shard monitor configuration. Expiry, warranties, import results and
+approval/platform notifications remain separate features.

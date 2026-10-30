@@ -26,7 +26,8 @@ export const logger = pino({
       "refreshToken",
       "accessToken",
       "accountNumber"
-      ,"keySecret", "secret_encrypted", "secret", "req.body.keySecret"
+      ,"keySecret", "secret_encrypted", "secret", "req.body.keySecret",
+      "webhookSecret", "webhookEncrypted", "req.body.webhookSecret", "req.headers[\"x-razorpay-signature\"]"
     ],
     censor: "[REDACTED]"
   }

@@ -39,9 +39,14 @@ import { createCustomerAccountsRouter } from "./modules/customer-accounts/custom
 import { createStorefrontCartRouter } from "./modules/storefront-cart/storefront-cart.routes.js";
 import { createStorefrontCheckoutRouter } from "./modules/storefront-checkout/storefront-checkout.routes.js";
 import { createPaymentsRouter } from "./modules/payments/payments.routes.js";
+import { createPaymentWebhookRouter } from "./modules/payments/payment-webhooks.js";
+import { createInboxRouter } from "./modules/notifications/inbox.routes.js";
+import { createDeliveryOperationsRouter } from "./modules/notifications/delivery-operations.routes.js";
 
 export function createApp({
   readinessCheck,
+  inboxService,
+  notificationDeliveryService,
   authenticationService,
   platformTenantService,
   platformAccessService,
@@ -74,6 +79,7 @@ export function createApp({
   storefrontWishlistService,
   storefrontCheckoutService,
   paymentsService,
+  paymentWebhookService,
   vendorsService,
   vendorPortalService,
   vendorAccessResolver,
@@ -115,9 +121,16 @@ export function createApp({
     }
   }));
   // CSV imports are staged as JSON text until object storage is selected.
+  // Signature verification needs the exact bytes, before the application's JSON parser.
+  app.use("/api/webhooks", createPaymentWebhookRouter({ service: paymentWebhookService }));
   app.use(express.json({ limit: "6mb" }));
 
   app.use("/health", createHealthRouter({ readinessCheck }));
+  app.use("/api/admin/v1/notifications", createInboxRouter({ audience: "ADMIN", service: inboxService, resolveTenant: tenantAccessResolver }));
+  app.use("/api/vendor/v1/notifications", createInboxRouter({ audience: "VENDOR", service: inboxService, resolveVendor: vendorAccessResolver }));
+  app.use("/api/platform/v1/notifications", createInboxRouter({ audience: "PLATFORM", service: inboxService }));
+  app.use("/api/platform/v1/notification-deliveries", createDeliveryOperationsRouter({ service: notificationDeliveryService }));
+  app.use("/api/storefront/v1/:tenantCode/stores/:storeCode/account/notifications", createInboxRouter({ audience: "CUSTOMER", service: inboxService }));
   app.use("/api/storefront/v1", createStorefrontRouter({ service: storefrontService }));
   app.use("/api/storefront/v1", createCustomerAccountsRouter({ service: customerAccountsService }));
   app.use("/api/storefront/v1", createStorefrontCartRouter({ service: storefrontCartService }));

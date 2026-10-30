@@ -1,0 +1,66 @@
+INBOX SEARCH AND TYPE FILTERS
+
+Implemented locations
+- Shared admin/vendor/platform notification bell.
+- Hornbook customer storefront notification bell.
+- Existing authenticated inbox API and customer proxy allowlist.
+This is a usability change to existing inboxes, not a new notification producer.
+
+Using it
+1. Open the notification bell.
+2. Choose Notification type to narrow the current All/Unread view immediately.
+3. Enter up to 100 characters in Search updates, then press Enter or Search.
+4. Search matches literal text in notification titles or messages, not the source
+   product/order database. It is not fuzzy search; % and _ are literal characters.
+5. Use Clear search & type to reset those two filters. The All/Unread choice is
+   preserved. Filter changes return to page one; page size remains ten.
+6. Empty filtered results say No matching updates, rather than implying there are
+   no unread updates elsewhere. The bell and header counts cover ALL accessible
+   notification types, regardless of the list filters.
+
+Read-state safety
+- Individual read/unread and record links remain available for matching updates.
+- Mark all read is disabled while a type or applied search filter is active.
+- Filtered API results return readThroughId:null rather than a bulk-read cutoff.
+- Clear the type/search before using the existing global snapshot-based bulk-read
+  operation. This avoids unintentionally marking hidden notifications as read.
+- The read-all API contract itself remains global and unchanged for older clients.
+
+Types
+Admin: Orders & delivery, Returns & exchanges, Payments, Inventory, Warranties,
+Imports, Approvals. Vendor: Orders & delivery. Platform: Tenant updates.
+Customer: Orders & delivery, Returns & exchanges, Payments, Warranties.
+Choices represent supported notification categories, not new module permissions.
+Selecting a type cannot grant access to otherwise hidden notifications.
+
+API additions
+GET notifications accepts optional category (ALL by default) and search (empty
+by default, trimmed, maximum 100 characters), alongside filter/page/pageSize.
+Existing read/unread, no-store behavior and audience-specific base paths remain.
+Queries are parameterized in the DAO. Rows AND matching counts use the same
+current recipient, tenant/store/vendor/source visibility restrictions. The global
+unread count remains scope-authorized and is deliberately not narrowed.
+No arbitrary user/tenant identifier or raw SQL is accepted as a filter.
+The storefront proxy rejects unknown/duplicate query keys and unsupported customer
+categories; it forwards normalized query values with URLSearchParams.
+
+UX and implementation
+Explicit labels, visible focus, full keyboard focus trapping (including new inputs
+and selects), spaced dropdown arrows and wrapped mobile controls follow the UI/UX
+guidance. Filters sit INSIDE the scrolling body, retaining reachable close and page
+controls on short screens. Search applies on submit, not on every keystroke.
+Requests use the existing abort and account/workspace isolation mechanisms. View
+identity includes both type and applied search, preventing old results from being
+shown as results of a new filter. Existing polling and customer Sonner feedback
+remain unchanged; searches do not produce toast notifications.
+No filters or notification content are saved to localStorage.
+
+Deployment and verification
+Changes are in D:\Global-ecommerce's backend, admin panel and storefront repos.
+No migration, package install or worker restart is required. Restart the API if
+not in watch mode, then refresh both applications.
+Lint, tests, builds and runtime/browser verification remain skipped as requested.
+Source review is not runtime verification. Later checks should cover cross-tenant
+isolation, literal wildcard searches, invalid/duplicate query values, pagination,
+unread counts, filtered bulk-read prevention, stale requests, keyboard navigation
+and narrow/landscape layouts.

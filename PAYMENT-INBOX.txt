@@ -1,0 +1,43 @@
+COMMERCE OS - TEST PAYMENT INBOX NOTIFICATIONS
+29 October 2026
+
+WHAT CHANGED
+Verified Razorpay TEST captures now enqueue in-app updates for the eligible
+customer and active tenant staff with order.read. Existing admin and customer
+inboxes display them and open the associated order using existing scoped links.
+
+WHEN AN UPDATE IS CREATED
+The hook runs after payments, payment_transactions, customer_orders and the
+payment history are updated, inside the same database transaction. It covers
+checkout verification and reconciliation through the existing recovery path.
+The notification DAO re-reads the capture and checks TEST provider, order,
+tenant, amount, currency, captured state and matching provider reference.
+The existing source-order lookup supplies the store and eligible customer.
+
+Normal capture: "Test payment verified". Every message explicitly says that
+no real money was collected and does not imply dispatch or vendor settlement.
+Capture on a cancelled order: "Test payment on cancelled order - review needed".
+The message keeps cancellation, reconciliation and refunds distinct. This
+feature does not reopen, dispatch or refund any order.
+
+DELIVERY AND PRIVACY
+- Existing inbox worker: npm run notifications:inbox
+- Until the worker runs, events remain queued; it was not started by this change.
+- Unique tenant/payment/audience keys prevent duplicate inbox events.
+- Recipient delivery and read-time access checks remain in the existing inbox.
+- No card data, credentials or gateway response bodies are stored in messages.
+- No SMTP email, browser push, vendor payout or platform alert is added.
+- No new migration, dependency, Redis, Docker or hosting service is required.
+- No historical captures are backfilled. Already-recorded payments remain
+  idempotent and do not generate new notifications on a status refresh.
+
+SCOPE NOT INCLUDED
+Live-money capture, COD collection, failed/authorized/pending payments, refund
+notifications, vendor settlement and stock/warranty/import/platform producers
+are not covered. Existing payment verification and recovery rules are unchanged.
+
+VERIFICATION STATUS
+Source and transaction paths reviewed only. Per user instruction, lint, tests
+and builds were not run. No real or simulated payment was triggered, no worker
+batch was processed, and no database records were created for verification.
+Runtime and rollback/deduplication verification remain pending.

@@ -1,5 +1,6 @@
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import { enqueueVendorApprovalInbox } from "../notifications/vendor-approval-inbox.events.js";
 
 const number = (value) => value === null || value === undefined ? null : Number(value);
 const iso = (value) => value instanceof Date ? value.toISOString() : value;
@@ -346,6 +347,9 @@ export async function insertAudit({ audit, connection }) {
   [uuidToBuffer(audit.id), uuidToBuffer(audit.tenantId), uuidToBuffer(audit.actorUserId), audit.action,
     audit.entityType, uuidToBuffer(audit.entityId), audit.requestId, audit.ipAddress, audit.userAgent,
     JSON.stringify(audit.beforeData), JSON.stringify(audit.afterData)]);
+  if (audit.entityType === "VENDOR" && ["vendor.created", "vendor.approved"].includes(audit.action)) {
+    await enqueueVendorApprovalInbox({ tenantId: audit.tenantId, auditId: audit.id, connection });
+  }
 }
 
 export async function findUserByEmail({ email, connection }) {

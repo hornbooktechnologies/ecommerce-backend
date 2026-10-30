@@ -1,0 +1,116 @@
+COMMERCE OS — PERSISTENT INBOX FOUNDATION
+Phase 2 handoff | 29 October 2026
+
+STATUS
+Backend foundation implemented in D:\Global-ecommerce\ecommerce-backend.
+Migration 034 is applied to the configured local database.
+No live admin/customer bell, grouped sidebar or guided product form is shipped
+in this phase. The approved UX prototype remains a separate review artifact.
+
+FLOW
+Order / return transaction
+  -> inbox_events (recipient snapshot, deduplicated event)
+  -> Node inbox worker (100 recipients per database transaction)
+  -> inbox_recipients (persistent read/unread state)
+  -> authenticated inbox API (current permissions checked again)
+  -> live admin/customer UI in the next phases
+
+INITIAL EVENT COVERAGE
+- Customer: order received/cancelled, shipment dispatched/delivered, and the
+  existing return/exchange lifecycle events.
+- Tenant admin: new order for users with order.read; return/exchange request
+  for users with return.read.
+- Vendor: new seller order for assigned vendor users with vendor.order.read.
+- Platform inbox API is available, but platform alert producers are not wired.
+- Events begin with new activity only; no historical backfill is performed.
+- Existing SMTP email processing is unchanged. In-app delivery does not require
+  ORDER_EMAILS_ENABLED and never sends mail. Receipt is not proof of payment.
+
+RUN LOCALLY (from the backend repository, using the existing .env)
+1. npm run db:migrate
+2. Start the API normally: npm run dev
+3. In a separate terminal: npm run notifications:inbox
+
+Useful commands:
+  npm run notifications:inbox:status  -- queue counts, no processing
+  npm run notifications:inbox:once    -- process at most one due batch
+
+The worker is separate from the API. It has NOT been installed as a persistent
+Windows service or started as an unattended background process. Until it runs,
+new events remain queued safely. Existing SMTP worker commands stay separate.
+No Docker, Redis, new service provider or additional npm dependency is required.
+
+API CONTRACT
+Base paths:
+  /api/admin/v1/notifications
+  /api/vendor/v1/notifications
+  /api/platform/v1/notifications
+  /api/storefront/v1/:tenantCode/stores/:storeCode/account/notifications
+
+Staff: bearer access token; admin/vendor also need x-tenant-id.
+Vendor: x-merchant-id selects one assigned vendor workspace when needed.
+Customer: existing customer bearer session; tenant/store resolved from URL.
+Never send a recipient/customer/user ID to choose whose inbox to read.
+
+GET base?filter=ALL&page=1&pageSize=10
+  filter: ALL or UNREAD. Page sizes: 10 (default), 20, 50.
+  data: items, total, unreadCount, readThroughId, page, pageSize, totalPages.
+  item: id, kind, category, title, message, readAt, createdAt, target.
+  target: type, id, orderId, storeId, merchantId. There is no arbitrary URL.
+GET base/unread-count
+  data: unreadCount.
+PATCH base/:notificationId
+  JSON: { "read": true } or { "read": false }.
+POST base/read-all
+  JSON: { "throughId": "readThroughId returned by page one" }.
+  Marks accessible notifications up to that snapshot boundary. Later deliveries
+  stay unread. If the cutoff becomes inaccessible, refresh the inbox and retry.
+
+All responses are no-store. Missing and inaccessible notification IDs return
+the same 404. The UI must map target types to its own allowlisted routes and
+handle unavailable destinations; the destination API must also authorize access.
+Polling, toast deduplication and account-switch cancellation belong to the next
+UI integration phase. No new browser push permission or email campaign is added.
+
+RELIABILITY AND ACCESS
+- Event insert is part of the source business transaction; rollback cancels it.
+- Unique tenant/event key and event/recipient keys make duplicate delivery safe.
+- Recipient membership is captured at event creation; new staff are not granted
+  historical notifications automatically.
+- Read access still requires current active session, tenant membership, relevant
+  permissions and matching customer/store or assigned vendor ownership.
+- A failed batch rolls back partial inserts and retries with bounded backoff.
+- Five failed attempts leave status FAILED with a sanitized error code.
+- Investigate FAILED events before controlled replay; there is no automatic
+  infinite retry, bulk replay UI, retention purge or monitoring service yet.
+- FOR UPDATE and short batches support MariaDB 10.4 without SKIP LOCKED.
+  High-volume/concurrent-worker load testing has not been performed.
+
+VERIFICATION
+- Backend lint: passed.
+- Backend suite: 403 tests, 396 passed, 7 opt-in tests skipped, 0 failed.
+- Dedicated INBOX_DB_TESTS=true integration test: passed separately on the local
+  database. All fixtures/deliveries rolled back; no real emails sent.
+- Covered actual Express + MariaDB API paths, event hooks, audience ownership,
+  tenant/store/customer isolation, vendor context, revoked permissions/sessions,
+  suspended membership, read/unread, default pagination, mark-all cutoff,
+  duplicate replay, 100-recipient batching, bounded retries and transaction rollback.
+- Browser verification awaits the live UI phase; prototype checks are separate.
+
+Run the opt-in database test in PowerShell:
+  $env:INBOX_DB_TESTS='true'
+  $env:LOG_LEVEL='silent'
+  node --test test/inbox.database.test.js
+  Remove-Item Env:INBOX_DB_TESTS
+
+The test requires Hornbook MAIN, an existing clothing offer/warehouse and an
+approved vendor. It only processes its own temporary events. Prefer a dedicated
+test database for automation and avoid running fixtures against production.
+
+NEXT
+Phase 3: connect the admin bell, unread badge, inbox panel, permission-aware
+links and approved grouped navigation. Expand admin event coverage explicitly.
+Phase 4: connect customer notifications and appropriate toast behaviour.
+Phase 5: guided product flow and end-to-end responsive/accessibility checks.
+Additional stock, payment, warranty, approval, import and platform events are
+not implied complete by this foundation; wire and verify each producer later.

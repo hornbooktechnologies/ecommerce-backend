@@ -1,0 +1,57 @@
+BULK IMPORT INBOX NOTIFICATIONS
+Implemented: 29 October 2026
+
+Scope
+- Product, pricing and inventory CSV imports only.
+- Persisted validation errors notify the uploader.
+- Completed imports (including partial or all-row failures) notify the uploader
+  and committer, deduplicated, provided each has current tenant bulk.read access.
+- No customer, vendor or platform notifications. No emails or browser push.
+- No alerts for error-free validation, exports or bulk publication/status actions.
+
+How to use
+1. Keep the existing backend inbox worker running: npm run notifications:inbox
+2. Validate or commit a new CSV import.
+3. Use the header notification bell, then Open imports.
+4. Match the Import reference in the notification to Ref in Recent import jobs.
+5. Review counts and download Errors for the complete CSV error report.
+Open imports opens the listing, not a preselected job or unsupported detail modal.
+Existing jobs are not backfilled.
+
+Safety and consistency
+- Event contents come from the persisted tenant-scoped job, never raw CSV rows.
+- No filename, raw exception text or imported personal data appears in alerts.
+- Permission and source ownership are rechecked for inbox list/count/read actions.
+- Unique event key: tenant + job + stage + ADMIN prevents duplicate stage alerts.
+- Validation result and its event share the validation transaction.
+- Final job status and its completion event share a transaction.
+- Row business operations still use their existing independent transactions.
+  This feature does NOT make the entire import atomic.
+- No automatic retry. Inspect current records before retrying failed rows.
+  Re-importing successful inventory rows can duplicate stock receipts.
+
+Known boundaries
+- Parser, missing-header, oversized-file or request errors before a persisted job
+  remain immediate form errors; they do not create inbox events.
+- Infrastructure failures or an interrupted COMMITTING job do not generate a
+  fabricated completion alert. Automated interrupted-job recovery is not included.
+- If a row write succeeds but its result-recording fails, the job may report that
+  row as failed. Review actual records before retrying; this pre-existing import
+  boundary is not changed by notification wiring.
+- If finalization/event persistence fails, earlier successful rows remain applied;
+  the job stays COMMITTING and requires investigation, not a blind file re-upload.
+- An unavailable inbox worker delays delivery; committed events remain queued.
+- No new schema migration or dependency is required (existing migrations 020/034).
+- No import jobs, customer records or stock quantities were changed during this work.
+
+UI corrections
+- Completed jobs display committed and failed counts (zero no longer falls back
+  to the number of valid rows).
+- Completed jobs no longer claim they are ready to commit.
+- Commit failures expose Download error report as well as validation errors.
+- Existing inbox controls are reused with a labelled Open imports action and a
+  decorative spreadsheet icon, following the UI/UX skill's accessibility guidance.
+
+Verification
+Source changes and diffs reviewed only. Lint, tests and build were skipped at
+the user's request. Runtime delivery and browser layout remain unverified.

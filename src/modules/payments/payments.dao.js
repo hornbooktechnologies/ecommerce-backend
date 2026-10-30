@@ -1,24 +1,36 @@
 import { uuidToBuffer as id, bufferToUuid as uuid, createId } from "../../core/identifiers/uuid.js";
+import { paymentError } from "./razorpay.js";
+import { enqueueTestPaymentInbox } from "../notifications/payment-inbox.events.js";
 
 export async function lockStore({ tenantId, storeId, connection }) {
   const [[row]] = await connection.execute("SELECT id FROM stores WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL FOR UPDATE", [id(tenantId), id(storeId)]);
   return Boolean(row);
 }
 export async function settings({ tenantId, storeId, connection }) {
-  const [[row]] = await connection.execute(`SELECT s.cod_enabled, s.online_enabled, a.id AS account_id, a.key_id
+  const [[row]] = await connection.execute(`SELECT s.cod_enabled, s.online_enabled, a.id AS account_id, a.key_id,
+    EXISTS(SELECT 1 FROM payment_webhook_secrets w WHERE w.account_id = a.id AND w.expires_at IS NULL) AS webhook_configured
     FROM stores st LEFT JOIN store_payment_settings s ON s.tenant_id = st.tenant_id AND s.store_id = st.id
     LEFT JOIN tenant_payment_settings t ON t.tenant_id = st.tenant_id
     LEFT JOIN tenant_payment_accounts a ON a.id = t.account_id AND a.tenant_id = st.tenant_id
     WHERE st.tenant_id = ? AND st.id = ? AND st.deleted_at IS NULL`, [id(tenantId), id(storeId)]);
   return row ? { codEnabled: row.cod_enabled === null ? true : Boolean(row.cod_enabled), onlineEnabled: Boolean(row.online_enabled),
-    accountId: uuid(row.account_id), keyId: row.key_id || "" } : null;
+    accountId: uuid(row.account_id), keyId: row.key_id || "", webhookConfigured: Boolean(row.webhook_configured) } : null;
 }
-export async function saveSettings({ tenantId, storeId, codEnabled, onlineEnabled, account, connection }) {
+export async function saveSettings({ tenantId, storeId, codEnabled, onlineEnabled, account, webhookEncrypted, connection }) {
   // Serialize tenant-wide credential replacement, including changes from different stores.
   await connection.execute("SELECT id FROM tenants WHERE id = ? FOR UPDATE", [id(tenantId)]);
   if (account) {
     await connection.execute("INSERT INTO tenant_payment_accounts (id, tenant_id, key_id, secret_encrypted) VALUES (?, ?, ?, ?)", [id(account.id), id(tenantId), account.keyId, account.encrypted]);
     await connection.execute("INSERT INTO tenant_payment_settings (tenant_id, account_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE account_id = VALUES(account_id)", [id(tenantId), id(account.id)]);
+  }
+  if (webhookEncrypted) {
+    const [[current]] = await connection.execute("SELECT account_id FROM tenant_payment_settings WHERE tenant_id = ?", [id(tenantId)]);
+    if (!current) paymentError("PAYMENT_ACCOUNT_REQUIRED", "Connect a test account before saving its webhook secret.", 422);
+    // Keep prior secrets for delayed retries; retain each account's old endpoint during key rotation.
+    await connection.execute(`UPDATE payment_webhook_secrets SET expires_at = DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 25 HOUR)
+      WHERE account_id = ? AND expires_at IS NULL`, [current.account_id]);
+    await connection.execute("INSERT INTO payment_webhook_secrets (id, account_id, secret_encrypted) VALUES (?, ?, ?)",
+      [id(createId()), current.account_id, webhookEncrypted]);
   }
   await connection.execute(`INSERT INTO store_payment_settings (tenant_id, store_id, cod_enabled, online_enabled) VALUES (?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE cod_enabled = VALUES(cod_enabled), online_enabled = VALUES(online_enabled)`, [id(tenantId), id(storeId), codEnabled, onlineEnabled]);
@@ -54,7 +66,8 @@ export async function saveGatewayOrder({ tenantId, attemptId, gatewayOrderId, co
   await connection.execute("UPDATE storefront_payment_attempts SET gateway_order_id = ? WHERE tenant_id = ? AND id = ? AND gateway_order_id IS NULL", [gatewayOrderId, id(tenantId), id(attemptId)]);
 }
 export async function captured({ tenantId, attempt, payment, connection }) {
-  await connection.execute("UPDATE storefront_payment_attempts SET captured_payment_id = ? WHERE tenant_id = ? AND id = ? AND captured_payment_id IS NULL", [payment.id, id(tenantId), id(attempt.id)]);
+  const [updated] = await connection.execute("UPDATE storefront_payment_attempts SET captured_payment_id = ? WHERE tenant_id = ? AND id = ? AND captured_payment_id IS NULL", [payment.id, id(tenantId), id(attempt.id)]);
+  if (!updated.affectedRows) paymentError("PAYMENT_CAPTURE_CONFLICT", "This payment has already been recorded. Refresh its status.");
   const amount = (attempt.amount / 100).toFixed(2);
   await connection.execute(`UPDATE payments SET status = 'CAPTURED', authorized_amount = ?, captured_amount = ?,
     provider_reference = ?, paid_at = UTC_TIMESTAMP(6) WHERE tenant_id = ? AND id = ?`, [amount, amount, payment.id, id(tenantId), id(attempt.paymentId)]);
@@ -65,4 +78,5 @@ export async function captured({ tenantId, attempt, payment, connection }) {
   await connection.execute("UPDATE customer_orders SET payment_status = 'PAID', version = version + 1 WHERE tenant_id = ? AND id = ?", [id(tenantId), id(attempt.orderId)]);
   await connection.execute(`INSERT INTO order_status_history (id, tenant_id, customer_order_id, status_type, previous_status, new_status, notes)
     VALUES (?, ?, ?, 'PAYMENT', 'UNPAID', 'PAID', 'Razorpay TEST capture verified. No real money collected.')`, [id(createId()), id(tenantId), id(attempt.orderId)]);
+  await enqueueTestPaymentInbox({ tenantId, attemptId: attempt.id, connection });
 }

@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import { createId } from "../../core/identifiers/uuid.js";
 import { withTransaction } from "../../database/transaction.js";
+import { env } from "../../config/env.js";
 import * as defaultDao from "./payments.dao.js";
 import { createCredentialVault, createRazorpayGateway, paymentError as fail, verifySignature } from "./razorpay.js";
 
@@ -24,7 +25,10 @@ export function createPaymentsService({ dao = defaultDao, transaction = withTran
     }
     if (payment.status !== "captured" || payment.captured !== true) return false;
     if (Number(payment.amount_refunded || 0) > 0) fail("PAYMENT_REFUNDED", "This payment has been refunded. Contact the store before retrying.");
-    if (attempt.capturedPaymentId) return true;
+    if (attempt.capturedPaymentId) {
+      if (attempt.capturedPaymentId !== payment.id) fail("PAYMENT_CAPTURE_CONFLICT", "Another capture is already recorded for this order. Contact the store.");
+      return true;
+    }
     await dao.captured({ ...scope, attempt, payment });
     attempt.capturedPaymentId = payment.id; attempt.paymentStatus = "PAID";
     return true;
@@ -48,7 +52,9 @@ export function createPaymentsService({ dao = defaultDao, transaction = withTran
       const settings = await dao.settings({ ...scope, connection });
       if (!settings) fail("STORE_NOT_FOUND", "Store not found.", 404);
       return { codEnabled: settings.codEnabled, onlineEnabled: settings.onlineEnabled, connected: Boolean(settings.accountId),
-        keyHint: settings.keyId ? `rzp_test_…${settings.keyId.slice(-4)}` : "", encryptionReady: vault.ready, mode: "TEST" };
+        keyHint: settings.keyId ? `rzp_test_…${settings.keyId.slice(-4)}` : "", encryptionReady: vault.ready, mode: "TEST",
+        webhookConfigured: Boolean(settings.webhookConfigured),
+        webhookUrl: settings.accountId ? `${env.apiPublicUrl.replace(/\/$/, "")}/api/webhooks/razorpay/test/${settings.accountId}` : "" };
     }),
     saveSettings: (scope, input) => transaction(scope.tenantId, async (connection) => {
       const args = { ...scope, connection };
@@ -62,7 +68,13 @@ export function createPaymentsService({ dao = defaultDao, transaction = withTran
         savedAccount = { id: createId(), keyId: input.keyId, encrypted };
       }
       if (input.onlineEnabled && (!vault.ready || !(savedAccount || current.accountId))) fail("PAYMENT_ACCOUNT_REQUIRED", "Connect a Razorpay test account before enabling online payments.", 422);
-      await dao.saveSettings({ ...args, codEnabled: input.codEnabled, onlineEnabled: input.onlineEnabled, account: savedAccount });
+      let webhookEncrypted;
+      if (input.webhookSecret) {
+        if (!(savedAccount || current.accountId)) fail("PAYMENT_ACCOUNT_REQUIRED", "Connect a test account before saving its webhook secret.", 422);
+        if (input.webhookSecret === input.keySecret) fail("WEBHOOK_SECRET_DISTINCT", "Use a separate webhook secret, not the API Key Secret.", 422);
+        webhookEncrypted = vault.encrypt(input.webhookSecret, `${scope.tenantId}:webhook`);
+      }
+      await dao.saveSettings({ ...args, codEnabled: input.codEnabled, onlineEnabled: input.onlineEnabled, account: savedAccount, webhookEncrypted });
       await dao.audit(args);
       return { saved: true };
     }),

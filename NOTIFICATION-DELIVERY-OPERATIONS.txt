@@ -1,0 +1,71 @@
+NOTIFICATION DELIVERY OPERATIONS
+
+Scope
+Super-admin /platform/notification-deliveries lists persistent in-app inbox
+events across tenants. This is not email delivery or a business-job retry tool.
+No orders, payments, imports or stock operations are replayed.
+
+Setup
+1. Apply migration 036_notification_delivery_controls.sql with npm run db:migrate.
+2. Restart the backend if it is not running in watch mode.
+3. Refresh the admin session (or sign out/in) to get the new navigation item.
+4. Open Notification deliveries in the platform sidebar.
+5. Run the existing npm run notifications:inbox worker separately to process
+   queued events. This feature neither starts nor installs a persistent worker.
+
+Permissions
+- platform.notification.read: metadata list and global counts.
+- platform.notification.retry: single-event retry; read permission also required.
+- The platform super administrator is unrestricted. No other existing role is
+  automatically granted these permissions. Custom platform roles may be assigned
+  explicit grants using Platform team.
+- API checks an active session, active user and current platform membership/roles.
+  Tenant/vendor/customer accounts do not gain cross-tenant access.
+
+Operator flow
+1. Start with Failed status, optionally filter audience or tenant code/event type.
+2. Inspect failure code, attempts and processed-recipient count.
+3. Investigate and correct the underlying delivery problem first. Raw exceptions
+   are intentionally not exposed by this API.
+4. Select Review retry. Supply a 10-500 character operational reason (no secrets),
+   tick the explicit confirmation and choose Queue retry.
+5. The server locks the event and checks FAILED status, the expected retry counter,
+   the maximum of 3 manual cycles, and recipient-snapshot structural integrity.
+6. In one transaction it queues the same event and writes an audit entry.
+7. Refresh the list after the worker runs. QUEUED is not a delivery confirmation.
+   PROCESSED means inbox-recipient creation finished, not that anyone read it.
+
+Safety and privacy
+- Only FAILED events can be retried. No bulk replay, queue reset or deletion.
+- Three manual cycles maximum. Each uses the worker's existing five-consecutive-
+  failure policy. A successful batch can reset the consecutive attempt count.
+- Existing recipients, event key, event ID and recipient offset are preserved.
+  The existing unique (event_id, recipient_id) key prevents duplicate inbox entries.
+- The locked expected retry counter rejects stale or repeated submissions, even
+  if the worker completes another failed cycle before the caller retries.
+- Message bodies, titles, customer details, recipients, payloads and raw errors
+  are not returned. The API returns only operational metadata and safe error codes.
+- Recipient visibility still follows the inbox's existing current-authorisation
+  checks; retry does not bypass tenant, vendor or customer visibility rules.
+- Audit action: platform.notification.retry_queued. Audit includes actor/request,
+  affected tenant/event, before/after counters and reason. It commits atomically
+  with the queue update. Audit failure rolls back the retry.
+- Summary counts are all-time/all-tenant and ignore filters. List pagination is
+  10 by default, with 20 and 50 as additional choices.
+
+Endpoints
+GET  /api/platform/v1/notification-deliveries
+POST /api/platform/v1/notification-deliveries/:eventId/retry
+POST body: reason, expectedManualRetries, confirmed:true.
+The mutation returns 202 with QUEUED state; both endpoints are no-store.
+
+Limitations and remaining verification
+- Shared-database V1 only, consistent with the existing inbox worker.
+- No worker heartbeat, automatic incident alerting, raw-log viewer or email retries.
+- Exhausted retries require investigation; this UI cannot repair malformed events.
+- No historical notification backfill.
+- Lint, tests, build and browser/runtime workflow verification were intentionally
+  skipped at the user's request. Source review is not runtime verification.
+- Do not test recovery using real orders/payments. Later verification should cover
+  permissions, concurrent retries, duplicate requests, invalid snapshots, cap
+  enforcement, audit rollback and mobile/keyboard behavior in an isolated fixture.

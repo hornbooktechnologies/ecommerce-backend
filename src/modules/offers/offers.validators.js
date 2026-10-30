@@ -2,8 +2,9 @@ import Joi from "joi";
 import { AppError } from "../../core/errors/app-error.js";
 
 const uuid = Joi.string().guid({ version: ["uuidv4", "uuidv5", "uuidv7"] });
-const nullableQuantity = Joi.number().precision(6).greater(0).max(999999999).allow(null, "").default(null);
-const nullableMoney = Joi.number().precision(4).min(0).max(999999999).allow(null, "").default(null);
+// PATCH must distinguish omitted fields (preserve) from explicit null/empty (clear).
+const nullableQuantity = Joi.number().precision(6).greater(0).max(999999999).allow(null, "");
+const nullableMoney = Joi.number().precision(4).min(0).max(999999999).allow(null, "");
 
 export const listOffersSchema = Joi.object({
   search: Joi.string().trim().max(190).allow("").default(""),
@@ -27,11 +28,11 @@ export const createOfferSchema = Joi.object({
   status: Joi.string().uppercase().valid("DRAFT", "ACTIVE").default("DRAFT"),
   fulfillmentType: Joi.string().uppercase().valid("MERCHANT", "PLATFORM").default("MERCHANT"),
   handlingTimeHours: Joi.number().integer().min(0).max(720).default(24),
-  minimumOrderQuantity: nullableQuantity,
-  maximumOrderQuantity: nullableQuantity,
+  minimumOrderQuantity: nullableQuantity.default(null),
+  maximumOrderQuantity: nullableQuantity.default(null),
   listPrice: Joi.number().precision(4).greater(0).max(999999999).required(),
   salePrice: Joi.number().precision(4).greater(0).max(999999999).required(),
-  costPrice: nullableMoney
+  costPrice: nullableMoney.default(null)
 }).custom((value, helpers) => {
   if (value.salePrice > value.listPrice) return helpers.error("offer.salePrice");
   if (value.minimumOrderQuantity && value.maximumOrderQuantity

@@ -43,7 +43,10 @@ const offersCte = `WITH RECURSIVE eligible AS (
   JOIN product_types pt ON pt.id = p.product_type_id AND pt.tenant_id = p.tenant_id AND pt.deleted_at IS NULL
   JOIN tenant_product_verticals tpv ON tpv.tenant_id = p.tenant_id AND tpv.vertical = pt.vertical AND tpv.status = 'ACTIVE'
   JOIN merchants m ON m.id = so.merchant_id AND m.tenant_id = so.tenant_id AND m.deleted_at IS NULL
-    AND ((m.merchant_type = 'FIRST_PARTY' AND m.status = 'ACTIVE') OR m.status = 'APPROVED')
+    AND m.status = 'ACTIVE'
+    AND (m.merchant_type = 'FIRST_PARTY' OR (m.merchant_type = 'VENDOR' AND EXISTS (
+      SELECT 1 FROM vendor_profiles vp WHERE vp.merchant_id = m.id AND vp.tenant_id = m.tenant_id
+        AND vp.onboarding_status = 'APPROVED')))
   JOIN store_merchants sm ON sm.store_id = so.store_id AND sm.merchant_id = so.merchant_id AND sm.status = 'ACTIVE'
   JOIN units_of_measure u ON u.id = pv.selling_uom_id
   JOIN offer_prices op ON op.id = (

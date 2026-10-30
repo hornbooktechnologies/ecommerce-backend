@@ -32,4 +32,6 @@ src/database/migrations/*
 package-lock.json
 .env.example
 !src/database/migrations/032_storefront_payments.sql
+!src/database/migrations/033_payment_recovery.sql
+!src/database/migrations/034_notification_inbox.sql
 !scripts/verify-storefront-payments.js

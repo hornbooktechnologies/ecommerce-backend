@@ -1,0 +1,50 @@
+VENDOR APPROVAL INBOX
+Implemented: 29 October 2026
+Repositories: D:\Global-ecommerce\ecommerce-backend and ecommerce-admin-panel
+
+Current workflow and coverage
+- Creating a vendor produces merchant PENDING / onboarding SUBMITTED.
+  Notify active tenant staff with BOTH vendor.read and vendor.manage.
+- Approving that pending vendor produces ACTIVE / APPROVED.
+  Notify the staff user who added the vendor, if still active with vendor.read.
+- The creator is resolved from the persisted vendor.created audit. Older records
+  without a creation audit have no guessed decision recipient.
+- Portal users can only be created after approval in the existing workflow.
+  These notifications are therefore tenant-admin notifications, not messages
+  to the vendor contact email or to a not-yet-created vendor account.
+- No new vendor rejection state or endpoint is introduced.
+- Document upload/verification/rejection, suspension/restoration, portal invitations
+  and vendor offer decisions are not notification producers in this phase.
+- Vendor bank verification and payout/settlement work remain deferred.
+
+Use
+1. Keep the API and existing delivery worker running:
+     npm run notifications:inbox
+2. Add a vendor through Vendors. Eligible reviewers receive an inbox alert.
+3. Review the vendor and use the existing Approve action.
+4. The eligible creator receives the approval update.
+5. Open vendors navigates to /admin/vendors; search the vendor code shown in
+   the message. It does not open an unsupported preselected detail dialog.
+Existing approval icon and visibly labelled action follow UI/UX skill guidance.
+
+Safety
+- Source joins enforce matching tenant, merchant type, vendor profile, audit
+  action and persisted state. Approval additionally requires prior PENDING.
+- Creation/status writes, audit and notification enqueue share a transaction.
+- Existing vendor decision row locks remain in place; no lifecycle rules change.
+- Audit-based event keys prevent duplicate delivery for the same action.
+- Permissions are checked at enqueue and again for inbox list/count/read actions.
+  Review alerts require vendor.manage plus vendor.read; creator alerts require read.
+- Deleted vendors and inaccessible/cross-tenant sources are hidden.
+- Only a bounded vendor code and generic instructions enter the notification;
+  PAN, GSTIN, bank details, notes, document numbers and contents are not included.
+- Approval does not imply portal access, verified bank details or published offers.
+- Alerts are historical snapshots, not a live pending queue; review current status.
+- No backfill, email, push, new dependency or migration.
+- No vendor data or live notification delivery was changed during implementation.
+
+Verification
+Source/diff review only. Installation checks original file hashes to protect
+concurrent edits and confirms copied files match staging.
+Lint, tests and builds skipped as requested. Runtime delivery and browser
+verification remain pending.

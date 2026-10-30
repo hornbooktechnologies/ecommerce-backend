@@ -1,0 +1,57 @@
+PLATFORM TENANT LIFECYCLE INBOX
+Implemented: 29 October 2026
+Repositories: D:\Global-ecommerce\ecommerce-backend and ecommerce-admin-panel
+
+Implemented events
+- Tenant created (PENDING).
+- Tenant activated (PENDING -> ACTIVE).
+- Tenant suspended (ACTIVE -> SUSPENDED).
+- Tenant restored (SUSPENDED -> ACTIVE).
+Routine tenant detail edits do not create notifications in this phase.
+
+Recipients and scope
+- Active users with ACTIVE platform membership and an unrevoked platform role.
+- The role must be platform_super_admin or grant platform.tenant.read.
+- No tenant-admin, vendor or customer notification is created.
+- The existing platform inbox rechecks session, membership, roles and permissions.
+- Platform events remain associated with the affected tenant in storage, but the
+  platform inbox is cross-tenant and requires no selected tenant workspace.
+- Pending/suspended tenant events stay accessible to authorized platform staff.
+  Deleted tenants and mismatched event/entity tenant IDs are not exposed.
+- Newly added platform users do not automatically receive historical events.
+
+How to use
+1. Keep the API and existing inbox delivery worker running:
+     npm run notifications:inbox
+2. Use an existing tenant create/activate/suspend/restore action.
+3. Open the notification bell in the platform area.
+4. Open tenant goes directly to /platform/tenants/{tenantId}, not an unsupported
+   query/modal. The destination API still enforces platform.tenant.read.
+5. Platform wording says Platform updates / Across tenants; existing admin/vendor
+   workspace wording is retained. The UI/UX skill informed the visible action
+   label and decorative tenant icon without changing the existing dialog layout.
+
+Consistency and privacy
+- Notification source is a persisted tenant audit matching the tenant and status.
+- Old/new states must match the specific lifecycle transition.
+- Existing tenant provisioning and transition transactions include the audit and
+  notification event, so rollback removes the alert as well as the mutation.
+- Existing row locks on tenant transitions remain unchanged.
+- Tenant + audit-ID event keys deduplicate delivery, while later restores and
+  suspensions can each generate their own historical update.
+- Messages contain a bounded tenant code and generic guidance, not owner email,
+  temporary passwords, suspension reasons or internal audit metadata.
+- Alerts describe recorded activity; inspect the tenant's current status before
+  acting. Activation does not imply catalog/stock/storefront setup is complete.
+
+Not included
+- Platform team/security event producers.
+- Failed-job/infrastructure alerts, operational monitoring and controlled replay.
+- Historical backfill, email/push, notification preferences or automatic actions.
+- No new database migration, dependency, Docker or Redis.
+- No tenant records or live notification delivery were changed during development.
+
+Verification
+Source and diffs reviewed; guarded installation checks existing hashes and copied
+contents. Lint, tests and builds were skipped at the user's request.
+Runtime delivery, permission regression and browser checks remain pending.

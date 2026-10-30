@@ -155,7 +155,7 @@ export function createBulkOperationsService({ dao = defaultDao, transaction = wi
         await dao.insertRow({ row: { id: createId(), tenantId, jobId, rowNumber: source.rowNumber, source: source.data,
           status: result.errors.length ? "INVALID" : "VALID", normalized: result.normalized, errors: result.errors }, connection });
       }
-      await dao.finishValidation({ jobId, counts: { total: parsed.rows.length, valid, invalid }, connection });
+      await dao.finishValidation({ tenantId, jobId, counts: { total: parsed.rows.length, valid, invalid }, connection });
     });
     return getJob(tenantId, jobId);
   }
@@ -188,7 +188,9 @@ export function createBulkOperationsService({ dao = defaultDao, transaction = wi
           message: error.message || "The row could not be committed." }] }); failed += 1;
       }
     }
-    await dao.finishCommit({ jobId, actorUserId: context.actorUserId, committed, failed });
+    await transaction(tenantId, async (connection) => {
+      await dao.finishCommit({ tenantId, jobId, actorUserId: context.actorUserId, committed, failed, connection });
+    });
     return getJob(tenantId, jobId);
   }
 

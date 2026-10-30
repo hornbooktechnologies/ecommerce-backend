@@ -482,12 +482,17 @@ export function createCatalogService({ dao = defaultDao, transaction = withTrans
     const orphanedMediaUrls = [];
     try {
       await transaction(tenantId, async (connection) => {
-        const current = await dao.findProductDetail({ tenantId, productId, connection });
+        const current = await dao.findProductDetail({ tenantId, productId, connection, forUpdate: true });
         if (!current) throw appError("PRODUCT_NOT_FOUND", "The product could not be found.", 404);
-        if (current.publicationStatus === "PUBLISHED"
-          || ["PENDING", "APPROVED"].includes(current.approvalStatus)) {
+        const published = current.publicationStatus === "PUBLISHED" && current.approvalStatus === "APPROVED";
+        if (!published && (current.publicationStatus === "PUBLISHED"
+          || ["PENDING", "APPROVED"].includes(current.approvalStatus))) {
           throw appError("PRODUCT_EDIT_NOT_ALLOWED",
-            "Only draft or rejected products can be edited. Archive a published product before changing its catalog details.", 409);
+            "Products awaiting approval or publication cannot be edited. Publish an approved product or request changes first.", 409);
+        }
+        if (published && (!input.categoryId || !input.taxCategoryId || !input.hsnSacCode?.trim())) {
+          throw appError("PRODUCT_NOT_READY",
+            "Published products must keep a category, GST category and HSN code.", 422);
         }
         const lookups = await dao.listLookups({ tenantId, connection });
         for (const [field, id, choices] of [
@@ -502,7 +507,7 @@ export function createCatalogService({ dao = defaultDao, transaction = withTrans
         }
         await dao.updateProduct({ product: {
           id: productId, tenantId, brandId: input.brandId, taxCategoryId: input.taxCategoryId,
-          name: input.name, slug: `${slug(input.name)}-${current.productCode.toLowerCase()}`,
+          name: input.name, slug: current.slug || `${slug(input.name)}-${current.productCode.toLowerCase()}`,
           shortDescription: input.shortDescription, hsnSacCode: input.hsnSacCode,
           countryOfOrigin: input.countryOfOrigin, manufacturerName: input.manufacturerName,
           isReturnable: input.isReturnable,
@@ -561,7 +566,8 @@ export function createCatalogService({ dao = defaultDao, transaction = withTrans
 
   async function transitionProduct(tenantId, productId, action, context, input = {}) {
     return transaction(tenantId, async (connection) => {
-      const current = await dao.findProductDetail({ tenantId, productId, connection });
+      // Serialize decisions so competing requests cannot emit contradictory approval alerts.
+      const current = await dao.findProductDetail({ tenantId, productId, connection, forUpdate: true });
       if (!current) throw appError("PRODUCT_NOT_FOUND", "The product could not be found.", 404);
       const transitions = {
         submit: {

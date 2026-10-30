@@ -1,5 +1,6 @@
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import { enqueueReturnEvent } from "../notifications/order-notifications.dao.js";
 
 const number = (value) => value === null || value === undefined ? null : Number(value);
 const iso = (value) => value instanceof Date ? value.toISOString() : value;
@@ -69,6 +70,34 @@ export async function listReturns({ tenantId, filters, connection = getPrimaryPo
     } };
 }
 
+export async function listReplacementOffers({ tenantId, returnId = null, connection = getPrimaryPool() }) {
+  const [rows] = await connection.execute(
+    `SELECT original.id AS original_order_item_id, replacement.id, replacement.variant_id,
+            pv.name AS variant_name, pv.sku, price.sale_price,
+            COALESCE((SELECT SUM(ib.on_hand_quantity - ib.reserved_quantity - ib.quarantine_quantity)
+              FROM inventory_balances ib WHERE ib.tenant_id = original.tenant_id
+                AND ib.offer_id = replacement.id), 0) AS available_quantity
+       FROM order_items original JOIN product_variants original_pv ON original_pv.id = original.variant_id
+       JOIN seller_orders original_so ON original_so.id = original.seller_order_id
+       JOIN seller_offers replacement ON replacement.tenant_id = original.tenant_id
+        AND replacement.merchant_id = original_so.merchant_id
+        AND replacement.store_id = (SELECT store_id FROM customer_orders WHERE id = original.customer_order_id)
+       JOIN product_variants pv ON pv.id = replacement.variant_id AND pv.product_id = original_pv.product_id
+        AND pv.id <> original_pv.id AND pv.status = 'ACTIVE' AND pv.deleted_at IS NULL
+       JOIN offer_prices price ON price.offer_id = replacement.id
+        AND (price.starts_at IS NULL OR price.starts_at <= UTC_TIMESTAMP())
+        AND (price.ends_at IS NULL OR price.ends_at > UTC_TIMESTAMP())
+      WHERE original.tenant_id = ? AND replacement.status <> 'ARCHIVED' AND replacement.deleted_at IS NULL
+      ${returnId ? `AND EXISTS (SELECT 1 FROM return_items ri
+        JOIN return_requests rr ON rr.id = ri.return_request_id
+        WHERE ri.order_item_id = original.id AND rr.tenant_id = original.tenant_id AND rr.id = ?)` : ""}`,
+    [uuidToBuffer(tenantId), ...(returnId ? [uuidToBuffer(returnId)] : [])]
+  );
+  return rows.map((row) => ({ orderItemId: bufferToUuid(row.original_order_item_id),
+    id: bufferToUuid(row.id), variantId: bufferToUuid(row.variant_id), variantName: row.variant_name,
+    sku: row.sku, price: number(row.sale_price), availableQuantity: number(row.available_quantity) || 0 }));
+}
+
 export async function listReturnOptions({ tenantId, connection = getPrimaryPool() }) {
   const tenant = uuidToBuffer(tenantId);
   const [itemResult, serialResult, replacementResult, warehouseResult] = await Promise.all([
@@ -110,21 +139,7 @@ export async function listReturnOptions({ tenantId, connection = getPrimaryPool(
          JOIN serial_numbers sn ON sn.id = fis.serial_number_id
          JOIN order_items oi ON oi.id = fi.order_item_id
         WHERE oi.tenant_id = ? AND sn.status = 'SOLD'`, [tenant]),
-    connection.execute(
-      `SELECT original.id AS original_order_item_id, replacement.id, replacement.variant_id,
-              pv.name AS variant_name, pv.sku, price.sale_price,
-              COALESCE((SELECT SUM(ib.on_hand_quantity - ib.reserved_quantity - ib.quarantine_quantity)
-                FROM inventory_balances ib WHERE ib.offer_id = replacement.id), 0) AS available_quantity
-         FROM order_items original JOIN product_variants original_pv ON original_pv.id = original.variant_id
-         JOIN seller_orders original_so ON original_so.id = original.seller_order_id
-         JOIN seller_offers replacement ON replacement.merchant_id = original_so.merchant_id
-          AND replacement.store_id = (SELECT store_id FROM customer_orders WHERE id = original.customer_order_id)
-         JOIN product_variants pv ON pv.id = replacement.variant_id AND pv.product_id = original_pv.product_id
-          AND pv.id <> original_pv.id AND pv.status = 'ACTIVE' AND pv.deleted_at IS NULL
-         JOIN offer_prices price ON price.offer_id = replacement.id
-          AND (price.starts_at IS NULL OR price.starts_at <= UTC_TIMESTAMP())
-          AND (price.ends_at IS NULL OR price.ends_at > UTC_TIMESTAMP())
-        WHERE original.tenant_id = ? AND replacement.status <> 'ARCHIVED' AND replacement.deleted_at IS NULL`, [tenant]),
+    listReplacementOffers({ tenantId, connection }),
     connection.execute(
       `SELECT w.id, w.code, w.name, m.display_name AS merchant_name FROM warehouses w
          JOIN merchants m ON m.id = w.merchant_id
@@ -132,9 +147,7 @@ export async function listReturnOptions({ tenantId, connection = getPrimaryPool(
   ]);
   const serials = serialResult[0].map((row) => ({ orderItemId: bufferToUuid(row.order_item_id),
     id: bufferToUuid(row.id), number: row.serial_number }));
-  const replacements = replacementResult[0].map((row) => ({ orderItemId: bufferToUuid(row.original_order_item_id),
-    id: bufferToUuid(row.id), variantId: bufferToUuid(row.variant_id), variantName: row.variant_name,
-    sku: row.sku, price: number(row.sale_price), availableQuantity: number(row.available_quantity) || 0 }));
+  const replacements = replacementResult;
   return {
     items: itemResult[0].map((row) => ({ id: bufferToUuid(row.id), orderId: bufferToUuid(row.customer_order_id),
       sellerOrderId: bufferToUuid(row.seller_order_id), offerId: bufferToUuid(row.offer_id),
@@ -232,6 +245,7 @@ export async function insertReturnRequest({ record, connection }) {
       uuidToBuffer(record.sellerOrderId), record.number, record.type, record.reasonCode,
       record.customerComments || null, record.notes || null, record.actorUserId ? uuidToBuffer(record.actorUserId) : null]
   );
+  await enqueueReturnEvent({ tenantId: record.tenantId, returnId: record.id, kind: "RETURN_REQUESTED", connection });
 }
 
 export async function insertReturnItem({ item, connection }) {
@@ -291,7 +305,10 @@ export async function getReturn({ tenantId, returnId, connection = getPrimaryPoo
       [uuidToBuffer(tenantId), requestRows[0].customer_order_id])
   ]);
   const request = mapReturn({ ...requestRows[0], exchange_status: exchangeRows[0][0]?.status || null });
-  return { request,
+  const replacementOffers = request.returnType === "EXCHANGE"
+    && !["COMPLETED", "REJECTED"].includes(request.status)
+    ? await listReplacementOffers({ tenantId, returnId, connection }) : [];
+  return { request, replacementOffers,
     items: itemRows[0].map((row) => ({ id: bufferToUuid(row.id), orderItemId: bufferToUuid(row.order_item_id),
       serialId: bufferToUuid(row.serial_number_id), serialNumber: row.serial_number,
       productName: row.product_name, variantName: row.variant_name, sku: row.sku,
@@ -321,6 +338,7 @@ export async function updateReturnStatus({ tenantId, returnId, fromStatus, toSta
     `UPDATE return_requests SET ${fields.join(", ")} WHERE tenant_id = ? AND id = ? AND status = ?`,
     [...values, uuidToBuffer(tenantId), uuidToBuffer(returnId), fromStatus]
   );
+  if (result.affectedRows) await enqueueReturnEvent({ tenantId, returnId, kind: `RETURN_${toStatus}`, connection });
   return result.affectedRows;
 }
 
@@ -424,6 +442,27 @@ export async function upsertReturnLot({ lot, connection }) {
     [uuidToBuffer(lot.balanceId), lot.number]
   );
   return bufferToUuid(rows[0].id);
+}
+
+export async function voidReturnedWarranties({ tenantId, returnId, connection }) {
+  const [result] = await connection.execute(
+    `UPDATE warranty_registrations wr
+        SET wr.status = 'VOID'
+      WHERE wr.tenant_id = ? AND wr.status IN ('ACTIVE', 'EXPIRED')
+        AND EXISTS (
+          SELECT 1 FROM return_items ri
+          JOIN return_requests rr ON rr.id = ri.return_request_id
+          WHERE rr.tenant_id = wr.tenant_id AND rr.id = ?
+            AND ri.order_item_id = wr.order_item_id AND ri.approved_quantity > 0
+            AND (ri.serial_number_id = wr.serial_number_id OR EXISTS (
+              SELECT 1 FROM return_item_bundle_serials ribs
+              WHERE ribs.return_item_id = ri.id
+                AND ribs.serial_number_id = wr.serial_number_id
+            ))
+        )`,
+    [uuidToBuffer(tenantId), uuidToBuffer(returnId)]
+  );
+  return result.affectedRows;
 }
 
 export async function updateReturnedSerial({ serialId, balanceId, lotId, status, connection }) {
@@ -540,6 +579,8 @@ export async function insertExchange({ exchange, balanceId, connection }) {
     "UPDATE inventory_balances SET reserved_quantity = reserved_quantity + ?, version = version + 1 WHERE id = ?",
     [exchange.quantity, uuidToBuffer(balanceId)]
   );
+  await enqueueReturnEvent({ tenantId: exchange.tenantId, returnId: exchange.returnId,
+    kind: "EXCHANGE_RESERVED", key: exchange.id, connection });
 }
 
 export async function findExchangeForUpdate({ tenantId, exchangeId, connection }) {
@@ -603,6 +644,8 @@ export async function completeExchange({ exchange, replacementItemId, actorUserI
     "UPDATE return_requests SET status = 'COMPLETED', completed_at = UTC_TIMESTAMP(6) WHERE tenant_id = ? AND id = ? AND status = 'INSPECTED'",
     [uuidToBuffer(exchange.tenantId), uuidToBuffer(exchange.returnId)]
   );
+  await enqueueReturnEvent({ tenantId: exchange.tenantId, returnId: exchange.returnId,
+    kind: "EXCHANGE_COMPLETED", key: exchange.id, connection });
 }
 
 export async function insertAudit({ audit, connection }) {

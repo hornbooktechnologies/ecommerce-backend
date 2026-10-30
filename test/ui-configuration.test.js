@@ -4,6 +4,13 @@ import { buildUiConfiguration } from "../src/modules/auth/ui-configuration.js";
 
 const tenantId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b79";
 
+test("navigation groups are API supplied without granting extra destinations", () => {
+  const ui = buildUiConfiguration([{ roleLevel: "TENANT", tenantId, permissions: ["order.read", "catalog.product.read", "tax.read"] }]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.group.id), ["daily", "products", "settings"]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.group.order), [0, 1, 4]);
+  assert.equal(ui.navigation.admin[tenantId].length, 3);
+});
+
 test("UI configuration filters tenant navigation from role capabilities", () => {
   const ui = buildUiConfiguration([{
     roleLevel: "TENANT", roleKey: "catalog_manager", tenantId,

@@ -1,4 +1,5 @@
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import { enqueueOrderEvent } from "../notifications/order-notifications.dao.js";
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 
 const number = (value) => value === null || value === undefined ? null : Number(value);
@@ -525,7 +526,8 @@ export async function listOrders({ tenantId, filters, connection = getPrimaryPoo
               COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)), ''),
                 JSON_UNQUOTE(JSON_EXTRACT(co.customer_snapshot, '$.name'))) AS customer_name,
               COALESCE(c.email, JSON_UNQUOTE(JSON_EXTRACT(co.customer_snapshot, '$.email'))) AS customer_email,
-              COALESCE(c.phone, JSON_UNQUOTE(JSON_EXTRACT(co.customer_snapshot, '$.phone'))) AS customer_phone,
+              COALESCE(NULLIF(NULLIF(TRIM(c.phone), 'null'), ''),
+                NULLIF(NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(co.customer_snapshot, '$.phone'))), 'null'), '')) AS customer_phone,
               (SELECT COUNT(*) FROM order_items oi WHERE oi.customer_order_id = co.id) AS item_count,
               (SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi WHERE oi.customer_order_id = co.id) AS total_quantity,
               (SELECT oi.product_name FROM order_items oi WHERE oi.customer_order_id = co.id
@@ -572,7 +574,8 @@ export async function getOrder({ tenantId, orderId, connection = getPrimaryPool(
               COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)), ''),
                 JSON_UNQUOTE(JSON_EXTRACT(co.customer_snapshot, '$.name'))) AS customer_name,
               COALESCE(c.email, JSON_UNQUOTE(JSON_EXTRACT(co.customer_snapshot, '$.email'))) AS customer_email,
-              COALESCE(c.phone, JSON_UNQUOTE(JSON_EXTRACT(co.customer_snapshot, '$.phone'))) AS customer_phone,
+              COALESCE(NULLIF(NULLIF(TRIM(c.phone), 'null'), ''),
+                NULLIF(NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(co.customer_snapshot, '$.phone'))), 'null'), '')) AS customer_phone,
               (SELECT COUNT(*) FROM order_items oi WHERE oi.customer_order_id = co.id) AS item_count,
               (SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi WHERE oi.customer_order_id = co.id) AS total_quantity,
               (SELECT oi.product_name FROM order_items oi WHERE oi.customer_order_id = co.id
@@ -817,6 +820,7 @@ export async function insertOutbox({ event, connection }) {
     [uuidToBuffer(event.id), uuidToBuffer(event.tenantId), uuidToBuffer(event.orderId),
       event.type, JSON.stringify(event.payload)]
   );
+  await enqueueOrderEvent({ event, connection });
 }
 
 export async function getFulfillmentOptions({ tenantId, orderId, connection = getPrimaryPool() }) {

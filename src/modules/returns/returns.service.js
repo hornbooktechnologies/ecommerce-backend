@@ -196,10 +196,14 @@ export function createReturnsService({ dao = defaultDao, transaction = withTrans
           reasonCode: current.request.reasonCode, notes: input.notes,
           actorUserId: context.actorUserId }, connection });
       }
+      // End the original sale's coverage atomically with stock disposition. A
+      // returned unit may become available for a new sale immediately after commit.
+      const voidedWarrantyCount = await dao.voidReturnedWarranties({ tenantId, returnId, connection });
       await dao.updateReturnStatus({ tenantId, returnId, fromStatus: "RECEIVED", toStatus: "INSPECTED",
         actorUserId: context.actorUserId, notes: input.notes, connection });
       await audit(tenantId, returnId, "return.inspected", { status: "RECEIVED" },
-        { status: "INSPECTED", condition: input.itemCondition, disposition: input.disposition }, context, connection);
+        { status: "INSPECTED", condition: input.itemCondition, disposition: input.disposition,
+          voidedWarrantyCount }, context, connection);
       return dao.getReturn({ tenantId, returnId, connection });
     });
   }

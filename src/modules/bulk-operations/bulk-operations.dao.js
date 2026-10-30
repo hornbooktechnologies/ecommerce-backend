@@ -1,5 +1,6 @@
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import { enqueueBulkImportInbox } from "../notifications/bulk-import-inbox.events.js";
 
 const json = (value, fallback = null) => value === null || value === undefined
   ? fallback : typeof value === "string" ? JSON.parse(value) : value;
@@ -33,11 +34,14 @@ export async function insertRow({ row, connection }) {
   );
 }
 
-export async function finishValidation({ jobId, counts, connection }) {
+export async function finishValidation({ tenantId, jobId, counts, connection }) {
   await connection.execute(
-    `UPDATE bulk_import_jobs SET status = ?, total_rows = ?, valid_rows = ?, invalid_rows = ? WHERE id = ?`,
-    [counts.invalid ? "VALIDATED_WITH_ERRORS" : "READY", counts.total, counts.valid, counts.invalid, uuidToBuffer(jobId)]
+    `UPDATE bulk_import_jobs SET status = ?, total_rows = ?, valid_rows = ?, invalid_rows = ?
+      WHERE tenant_id = ? AND id = ?`,
+    [counts.invalid ? "VALIDATED_WITH_ERRORS" : "READY", counts.total, counts.valid, counts.invalid,
+      uuidToBuffer(tenantId), uuidToBuffer(jobId)]
   );
+  if (counts.invalid) await enqueueBulkImportInbox({ tenantId, jobId, stage: "VALIDATION", connection });
 }
 
 export async function listJobs({ tenantId, page, pageSize, connection = getPrimaryPool() }) {
@@ -92,12 +96,14 @@ export async function claimJob({ tenantId, jobId, connection = getPrimaryPool() 
   return result.affectedRows === 1;
 }
 
-export async function finishCommit({ jobId, actorUserId, committed, failed, connection = getPrimaryPool() }) {
+// The caller must supply the transaction used for both the final result and its inbox event.
+export async function finishCommit({ tenantId, jobId, actorUserId, committed, failed, connection }) {
   await connection.execute(
     `UPDATE bulk_import_jobs SET status = ?, committed_rows = ?, failed_rows = ?, committed_by = ?, committed_at = UTC_TIMESTAMP(6)
-      WHERE id = ?`, [failed ? "COMPLETED_WITH_ERRORS" : "COMPLETED", committed, failed,
-      uuidToBuffer(actorUserId), uuidToBuffer(jobId)]
+      WHERE tenant_id = ? AND id = ?`, [failed ? "COMPLETED_WITH_ERRORS" : "COMPLETED", committed, failed,
+      uuidToBuffer(actorUserId), uuidToBuffer(tenantId), uuidToBuffer(jobId)]
   );
+  await enqueueBulkImportInbox({ tenantId, jobId, stage: "COMPLETION", connection });
 }
 
 export async function existingCatalogKeys({ tenantId, connection = getPrimaryPool() }) {

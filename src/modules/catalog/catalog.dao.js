@@ -1,5 +1,6 @@
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import { enqueueProductApprovalInbox } from "../notifications/product-approval-inbox.events.js";
 
 function number(value) {
   return value === null || value === undefined ? null : Number(value);
@@ -512,9 +513,9 @@ export async function findProductSummary({ tenantId, productId, connection = get
     name: rows[0].name, vertical: rows[0].vertical } : null;
 }
 
-export async function findProductDetail({ tenantId, productId, connection = getPrimaryPool() }) {
+export async function findProductDetail({ tenantId, productId, connection = getPrimaryPool(), forUpdate = false }) {
   const [rows] = await connection.execute(
-    `SELECT p.id, p.product_code, p.name, p.short_description, p.approval_status,
+    `SELECT p.id, p.product_code, p.name, p.slug, p.product_kind, p.short_description, p.approval_status,
             p.publication_status, p.approval_note, p.brand_id, p.tax_category_id, p.hsn_sac_code,
             p.country_of_origin, p.manufacturer_name, p.is_returnable,
             p.return_window_days, p.metadata, pt.vertical,
@@ -523,7 +524,7 @@ export async function findProductDetail({ tenantId, productId, connection = getP
        FROM products p
        JOIN product_types pt ON pt.id = p.product_type_id
       WHERE p.tenant_id = ? AND p.id = ? AND p.deleted_at IS NULL
-      LIMIT 1`,
+      LIMIT 1 ${forUpdate ? "FOR UPDATE" : ""}`,
     [uuidToBuffer(tenantId), uuidToBuffer(productId)]
   );
   if (!rows[0]) return null;
@@ -531,6 +532,7 @@ export async function findProductDetail({ tenantId, productId, connection = getP
   const metadata = json(row.metadata);
   return {
     id: bufferToUuid(row.id), productCode: row.product_code, name: row.name,
+    slug: row.slug, productKind: row.product_kind,
     shortDescription: row.short_description || "", vertical: row.vertical,
     brandId: bufferToUuid(row.brand_id), categoryId: bufferToUuid(row.category_id),
     taxCategoryId: bufferToUuid(row.tax_category_id), hsnSacCode: row.hsn_sac_code || "",
@@ -1032,6 +1034,10 @@ export async function insertAudit({ audit, connection }) {
       audit.action, audit.entityType || "PRODUCT", uuidToBuffer(audit.entityId), audit.requestId, audit.ipAddress,
       audit.userAgent, JSON.stringify(audit.afterData)]
   );
+  if ((!audit.entityType || audit.entityType === "PRODUCT")
+    && ["catalog.product.submitted", "catalog.product.approved", "catalog.product.rejected"].includes(audit.action)) {
+    await enqueueProductApprovalInbox({ tenantId: audit.tenantId, auditId: audit.id, connection });
+  }
 }
 
 export async function insertOutbox({ event, connection }) {

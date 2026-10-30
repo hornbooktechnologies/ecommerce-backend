@@ -1,0 +1,76 @@
+INBOX WORKER HEALTH AND STALLED-QUEUE WARNINGS
+
+Location
+Super-admin > Notification deliveries > Inbox worker health.
+GET /api/platform/v1/notification-deliveries/health uses the existing active-session,
+platform-membership and platform.notification.read permission checks. No recipient,
+message, host, process command line or raw database error is returned.
+
+Deployment
+1. Apply migration 037_inbox_worker_health.sql using npm run db:migrate.
+2. Restart the API if it is not running in watch mode.
+3. Restart any existing inbox worker so it runs the updated code. Start it from
+   ecommerce-backend with npm run notifications:inbox if it is not running.
+4. Refresh Notification deliveries. A worker running older code is not observed.
+5. Optional read-only CLI: npm run notifications:inbox:status.
+   --status does not create a heartbeat or process deliveries.
+
+Monitoring semantics
+- Each worker process gets an independent random run ID, with DAEMON or ONCE mode.
+- A startup report is STARTING, not a completed processing cycle.
+- Heartbeats are recorded after a delivery transaction finishes (including idle
+  queue checks). No separate timer masks a hung processing loop.
+- Reports are throttled to about 15 seconds for an unchanged outcome; outcome
+  changes report immediately. Telemetry writes have a five-second query timeout.
+- Graceful shutdown marks the run STOPPED. Forced termination becomes stale.
+- Continuous workers must finish a cycle within 120 seconds to count as responsive.
+- ONCE runs never count as continuous-worker health. STOPPED runs don't either.
+- RESPONDING means a fresh successful/idle cycle, not proven end-to-end delivery.
+- DEGRADED means at least one recent worker cycle reported failure; failure of a
+  particular event also remains visible in the failed-delivery warning.
+- UNOBSERVED / NO_HEARTBEAT means no continuous worker has reported / no recent
+  completed cycle is available. An empty queue does not make an absent worker healthy.
+- A reporting worker can coexist with a stalled backlog. Both indicators remain.
+- Telemetry is best-effort and outside delivery transactions. A telemetry failure
+  logs a generic warning and does not replay or roll back a committed notification.
+- Database timestamps drive all age calculations, avoiding cross-process clock skew.
+
+Stalled queue
+The API checks current data without needing the worker to run. A queued event is
+potentially stalled if at least 300 seconds elapsed since the LATER of its due
+time and last successful delivery-batch progress. Future retry backoff is excluded.
+Successful batches now update last_delivery_progress_at in their existing
+transaction. A retry's new due time starts a new waiting window automatically.
+Old queued rows have no historical progress timestamp; until the updated worker
+processes them, monitoring conservatively uses their existing due time.
+Long batches, lock contention or sustained backlog can trigger a potential-stall
+warning; this is an investigation signal, not proof that a process has crashed.
+
+UI behavior
+- Shows continuous-worker status, due/stalled/scheduled counts and timestamps in IST.
+- Responsive cards and text-labelled warnings use the existing light/dark tokens.
+- Auto-refresh is every 30 seconds after a completed health request while visible;
+  it pauses when the tab is hidden or a retry is being submitted. Users can turn
+  auto-refresh off. Manual Refresh also updates health.
+- Health refresh does not reload the delivery list or erase a retry reason.
+- Polling is cancelled on unmount or session change; no overlapping polling cycle.
+- API failure/timeout removes the previous health result and displays Unavailable.
+- Paused results are explicitly labelled snapshots with their checked timestamp.
+- Alerts are current-state warnings, not persistent incident records. They clear
+  when a later successful check sees recovery. No repeated toast or bell spam.
+
+Limits
+This monitors inbox delivery ONLY. It does not monitor stock scanning, SMTP or
+payment recovery, send external alerts, install a background service, restart
+processes, retry business operations or repair database errors. Worker run records
+are retained; no automatic deletion or retention policy is introduced.
+If the API/database itself is unavailable, health cannot be determined; use an
+external uptime monitor after deployment hosting is selected.
+No worker process is started by installation of this feature.
+
+Verification status
+Lint, tests, build and browser/runtime workflow checks were skipped as requested.
+Source review and migration application are not end-to-end verification.
+Later isolated checks should cover multiple workers, forced stop, graceful stop,
+one-off runs, idle queues, expired heartbeats, long progressive batches, scheduled
+backoff, DB outage, hidden tabs, stale responses, auth revocation and mobile layout.

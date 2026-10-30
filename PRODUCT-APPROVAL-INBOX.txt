@@ -1,0 +1,57 @@
+PRODUCT APPROVAL INBOX
+Implemented: 29 October 2026
+Repositories: D:\Global-ecommerce\ecommerce-backend and ecommerce-admin-panel
+
+Coverage
+- Product submitted: notify active tenant staff with BOTH catalog.product.read
+  and catalog.product.approve.
+- Product approved/rejected: notify the most recent submitting user, provided
+  that user still has active tenant membership and catalog.product.read.
+- The recipient is taken from the submission audit, not guessed from the owner
+  or product creator. Missing submission audit means no decision recipient.
+- Resubmission creates a separate alert. Bulk lifecycle submission uses the
+  same catalog service and therefore the same notification hook.
+- Tenant-admin audience only. No storefront/customer, vendor or platform alert.
+- Vendor onboarding/approval notifications are the next separate feature.
+- Publish, archive, restore, edits and creation do not trigger approval alerts.
+
+How users receive updates
+1. Keep the backend API and the existing worker running:
+     npm run notifications:inbox
+2. Submit a ready product using the catalog's existing lifecycle action.
+3. Eligible reviewers receive Product awaiting approval.
+4. Approve or reject using the existing catalog workflow.
+5. The latest eligible submitter receives the decision.
+6. Open catalog opens /admin/catalog/products; use the product code in the
+   notification to find the record. It does not open a preselected modal.
+7. Read the review note in the catalog. Notes are not copied into the inbox.
+
+Safety and consistency
+- Source data is the persisted audit and matching tenant/product state.
+- Product workflow decisions now acquire the existing FOR UPDATE lock before
+  checking the current state. Competing decisions cannot both pass a stale state.
+- Workflow change, audit, inbox event and existing outbox event share a database
+  transaction. A rollback leaves no success notification.
+- The event key uses the audit ID, so retrying delivery is deduplicated without
+  suppressing a later resubmission.
+- Inbox list/count/read operations require current catalog-read permission;
+  reviewer alerts additionally require current approval permission.
+- Deleted or cross-tenant product sources are not exposed.
+- The notification contains a bounded product code and generic instructions,
+  not internal review notes or account data.
+- Approval does not imply publication or available stock.
+- Notifications are event history, not a live task queue. Always review current
+  product state before acting; an older pending alert may have been resolved.
+- No historical backfill, email delivery, push subscription, new dependency
+  or database migration is added.
+- No product state or live notification delivery was changed during development.
+
+UI
+Existing inbox controls, motion, typography and permission-aware links are reused.
+The UI/UX skill's documented guidance informed the visible Open catalog label
+and decorative approval icon; its Python search tool was unavailable.
+
+Verification
+Source and diffs reviewed only. File hashes guard installation against concurrent
+edits. Lint, tests and builds intentionally skipped at the user's request.
+Runtime delivery, concurrent-decision behaviour and browser checks remain pending.

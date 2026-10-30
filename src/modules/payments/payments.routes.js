@@ -8,7 +8,8 @@ import { paymentError } from "./razorpay.js";
 
 export const paymentSettingsSchema = Joi.object({ codEnabled: Joi.boolean().strict().required(), onlineEnabled: Joi.boolean().strict().required(),
   keyId: Joi.string().trim().pattern(/^rzp_test_[A-Za-z0-9]+$/).max(80).allow("").default(""),
-  keySecret: Joi.string().trim().min(16).max(200).allow("").default("") });
+  keySecret: Joi.string().trim().min(16).max(200).allow("").default(""),
+  webhookSecret: Joi.string().trim().min(16).max(200).allow("").default("") });
 export function requirePaymentOwner(req, _res, next) {
   if (!req.context.tenant.assignments.some((role) => role.scopeType === "TENANT" && role.roleKey === "tenant_owner")) {
     paymentError("FORBIDDEN", "Only the tenant owner can manage payment accounts.", 403);

@@ -1,0 +1,62 @@
+NOTIFICATION RETRY HISTORY
+
+Use
+1. Open Super-admin > Notification deliveries.
+2. Find the event and choose View retry history beneath its delivery details.
+3. If a retried event disappeared from the default Failed filter, select All
+   statuses (it may now be Queued or Processed).
+4. Review operator, time in IST, reason, before/after counters, audit reference
+   and request reference. Refresh history to fetch the latest snapshot.
+
+Permissions and privacy
+Requires BOTH platform.notification.read and platform.audit.read, or the existing
+unrestricted platform super-administrator role. The UI hides history without audit
+permission; the API independently checks the active session/user, current platform
+membership and current role permissions on every request. Retry permission alone
+does not grant audit access. No new permission or automatic role grant is added.
+
+The DAO resolves the selected event and then restricts audit rows by its tenant ID,
+event ID, NOTIFICATION_EVENT entity type and platform.notification.retry_queued
+action. This endpoint cannot be used to browse unrelated audit records.
+Only a small allowlisted response is returned. Notification message/recipients,
+customer payloads, email addresses, IP addresses, user agents and raw JSON are
+excluded. Reasons are operator-entered text and may still be sensitive; this is
+why platform audit permission is required. Reasons render as escaped plain text,
+not HTML, and are limited to 500 characters. Do not enter secrets in retry reasons.
+
+History semantics
+- Read-only; viewing does not retry, mark notifications read or alter audit rows.
+- Records accepted manual retry requests, not automatic worker attempts or rejected
+  retry requests. The existing three-cycle manual retry limit is unchanged.
+- The historical FAILED -> QUEUED transition is not proof of eventual delivery.
+- The current delivery state is shown separately as a snapshot at history load.
+- Actor name is the user's current display name, not a historical name snapshot.
+  Missing/deleted user records display Unavailable user; the audit remains visible.
+- Missing/malformed optional audit fields display Not recorded / No reason recorded.
+- Stable audit IDs are used as UI keys; equal timestamps do not collide.
+- History is newest-first with default page size 10 (also 20 or 50), with stable
+  occurred_at/id ordering. No CSV download, deletion or audit editing is provided.
+
+API
+GET /api/platform/v1/notification-deliveries/:eventId/history?page=1&pageSize=10
+Response: event (id, current status, manualRetries), items, page, pageSize, total,
+totalPages. The inherited no-store headers apply. Query and event ID are validated.
+Event/count/history reads use one transaction for a consistent database snapshot.
+Unknown events return 404 after permission checks.
+
+UI behavior
+Inline, keyboard-operable disclosure with aria-expanded and aria-controls; no
+additional modal or scroll lock. Responsive timeline, wrapped references/reasons,
+theme-token colors, and reduced-motion support follow the UI/UX guidance.
+Requests are aborted on close, account/permission change, list refresh or unmount.
+There is a 15-second request timeout and visible loading/error/empty states.
+No background polling or browser persistence of audit data is introduced.
+History fetching pauses during a retry submission; a later refresh reloads it.
+
+Deployment and verification
+No migration, worker restart, new dependency or database mutation is required.
+Restart the API if not in watch mode and refresh the admin page after installation.
+Lint, tests, build and browser/runtime verification remain skipped at the user's
+request. Source review is not runtime verification. Later checks should cover
+unauthorised access, tenant/event constraints, missing actors, equal timestamps,
+malformed optional data, timeout/abort handling and keyboard/mobile behavior.

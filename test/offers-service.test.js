@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createOffersService } from "../src/modules/offers/offers.service.js";
+import { updateOfferSchema } from "../src/modules/offers/offers.validators.js";
 
 const tenantId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b88";
 const merchantId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b55";
@@ -61,3 +62,45 @@ test("a suspended merchant offer cannot be reactivated", async () => {
   await assert.rejects(() => service.updateOffer(tenantId, "018f47f2-6b6d-7c34-ae31-8f4f17b79b66",
     { status: "ACTIVE" }, context), (error) => error.code === "MERCHANT_INACTIVE" && error.status === 409);
 });
+
+function validatedPatch(input) {
+  const { value, error } = updateOfferSchema.validate(input, { abortEarly: false, convert: true, stripUnknown: true });
+  assert.ifError(error);
+  return value;
+}
+
+for (const status of ["ACTIVE", "INACTIVE", "DRAFT"]) {
+  test(`validated ${status} update preserves quantities and does not rewrite price history`, async () => {
+    const { calls, service } = setup();
+    await service.updateOffer(tenantId, "018f47f2-6b6d-7c34-ae31-8f4f17b79b66", validatedPatch({ status }), context);
+    assert.equal(calls.offers[0].changes.minimumOrderQuantity, 1);
+    assert.equal(calls.offers[0].changes.maximumOrderQuantity, 10);
+    assert.equal(calls.closed.length, 0);
+    assert.equal(calls.prices.length, 0);
+    assert.equal(calls.audits.length, 1);
+  });
+}
+
+test("validated price-only update preserves cost and quantities", async () => {
+  const { calls, service } = setup();
+  await service.updateOffer(tenantId, "018f47f2-6b6d-7c34-ae31-8f4f17b79b66", validatedPatch({ salePrice: 950 }), context);
+  assert.equal(calls.offers[0].changes.minimumOrderQuantity, 1);
+  assert.equal(calls.offers[0].changes.maximumOrderQuantity, 10);
+  assert.equal(calls.prices[0].price.costPrice, 700);
+  assert.equal(calls.prices[0].price.salePrice, 950);
+  assert.equal(calls.prices.length, 1);
+  assert.equal(calls.closed.length, 1);
+});
+
+for (const clearValue of [null, ""]) {
+  test(`validated explicit ${JSON.stringify(clearValue)} still clears optional fields`, async () => {
+    const { calls, service } = setup();
+    await service.updateOffer(tenantId, "018f47f2-6b6d-7c34-ae31-8f4f17b79b66", validatedPatch({
+      minimumOrderQuantity: clearValue, maximumOrderQuantity: clearValue, costPrice: clearValue
+    }), context);
+    assert.equal(calls.offers[0].changes.minimumOrderQuantity, null);
+    assert.equal(calls.offers[0].changes.maximumOrderQuantity, null);
+    assert.equal(calls.prices[0].price.costPrice, null);
+    assert.equal(calls.prices[0].price.salePrice, 900);
+  });
+}

@@ -69,14 +69,21 @@ function addWatermark(doc, detail) {
       .text(companyInitials(detail), centerX - 52, centerY - 72, { width: 104, align: "center" });
   }
 
-  const name = companyName(detail);
-  doc.opacity(0.058).fillColor(palette.gold).font("Helvetica-Bold")
-    .fontSize(name.length > 32 ? 27 : 34)
-    .text(name.toUpperCase(), centerX - 230, centerY + 22, {
-      width: 460, align: "center", characterSpacing: name.length > 32 ? 1.1 : 2.2
-    });
+  const name = companyName(detail).toUpperCase();
+  const nameOptions = {
+    width: 460, align: "center", characterSpacing: name.length > 32 ? 1.1 : 2.2
+  };
+  let nameSize = name.length > 32 ? 27 : 34;
+  doc.opacity(0.058).fillColor(palette.gold).font("Helvetica-Bold").fontSize(nameSize);
+  // Keep long names compact without truncation; measure with the rendering options.
+  while (nameSize > 10 && doc.heightOfString(name, nameOptions) > 84) {
+    doc.fontSize(--nameSize);
+  }
+  doc.text(name, centerX - 230, centerY + 22, nameOptions);
+  // PDFKit advances y past all wrapped lines. A fixed offset overlaps long names.
+  const captionY = doc.y + 12;
   doc.font("Helvetica").fontSize(9)
-    .text(documentLabel(detail.documentType), centerX - 220, centerY + 68, {
+    .text(documentLabel(detail.documentType), centerX - 220, captionY, {
       width: 440, align: "center", characterSpacing: 2.1
     });
   doc.restore();

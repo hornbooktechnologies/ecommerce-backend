@@ -77,7 +77,8 @@ export const transferStockSchema = Joi.object({
   destinationWarehouseId: uuid.required(),
   sourceLotId: uuid.allow(null, "").default(null),
   quantity: Joi.number().precision(6).greater(0).required(),
-  serialIds: Joi.array().items(uuid.required()).unique().max(500).default([]),
+  // Whether serials are required depends on the source product, checked by the service.
+  serialIds: Joi.array().items(uuid).unique().max(500).default([]),
   notes: Joi.string().trim().min(3).max(1000).required()
 }).required();
 
