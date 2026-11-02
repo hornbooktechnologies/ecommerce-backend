@@ -18,6 +18,7 @@ const schema = Joi.object({
   ADMIN_APP_URL: Joi.string().uri({ allowRelative: false }).default("http://localhost:3000"),
   API_PUBLIC_URL: Joi.string().uri({ allowRelative: false }).allow(""),
   PRODUCT_MEDIA_DIRECTORY: Joi.string().default("storage/product-media"),
+  REVIEW_PHOTO_DIRECTORY: Joi.string().default('storage/review-photos'),
   VENDOR_LOGO_DIRECTORY: Joi.string().default("storage/vendor-logos"),
   VENDOR_DOCUMENT_DIRECTORY: Joi.string().default("storage/vendor-documents")
 }).unknown(true);
@@ -50,6 +51,7 @@ export const env = Object.freeze({
   adminAppUrl: value.ADMIN_APP_URL.replace(/\/$/, ""),
   apiPublicUrl: (value.API_PUBLIC_URL || `http://localhost:${value.PORT}`).replace(/\/$/, ""),
   productMediaDirectory: value.PRODUCT_MEDIA_DIRECTORY,
+  reviewPhotoDirectory: value.REVIEW_PHOTO_DIRECTORY,
   vendorLogoDirectory: value.VENDOR_LOGO_DIRECTORY,
   vendorDocumentDirectory: value.VENDOR_DOCUMENT_DIRECTORY
 });

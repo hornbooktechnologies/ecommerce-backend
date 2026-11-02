@@ -1,0 +1,56 @@
+BULK IMPORT RECOVERY - 30 October 2026
+
+Scope
+Products, pricing and inventory imports. No Docker, Redis or new worker.
+Existing type-specific permissions still protect commit/resume; bulk.read alone
+only allows viewing. Tenant IDs scope every recovery query and row update.
+
+Deployment
+Stop/drain the old API before migrating: an old running importer does not use
+the new atomic protocol. Apply 038_bulk_import_recovery.sql through db:migrate,
+then restart the API and admin application. Do not run old/new importer code
+against the database at the same time during the upgrade.
+
+Operator flow
+1. Validate a CSV as before. Review then commit the original job.
+2. If the request stops, do NOT upload the file again. Open Recent import jobs,
+   select Review and Refresh status. Row counts are persisted as work finishes.
+3. A new-protocol COMMITTING job can be resumed after five minutes without
+   progress. Select the confirmation checkbox, then Resume unfinished rows.
+4. Only VALID rows run. COMMITTED and FAILED rows never replay. Download the
+   error report and correct failed rows separately. No automatic failed-row retry.
+5. Repeating commit on a completed job only returns the stored result.
+
+Safety
+Each row's business changes, business audit/outbox events, row result and job
+progress share one database connection and transaction. An ambiguous COMMIT
+response stops processing; later recovery rereads the authoritative row result.
+Known 4xx business errors roll back first, then persist FAILED in a new fenced
+transaction. Unexpected/database failures never become misleading row failures.
+The job row lock spans each operation. A run token fences out an older runner
+after a newer request claims it. Claim/resume is audited. Final counts are read
+from row results; finalization and the completion inbox event remain atomic.
+
+Same-file inventory protection
+New inventory validations fingerprint parsed rows (sorted column names; file
+name ignored). Validating the same data again returns the original tenant-scoped
+job, including simultaneous requests; it does not create another stock import.
+This is NOT a delivery-wide idempotency key: changed rows, quantities, values,
+headers or row order can create a different job. Genuine identical later
+deliveries should use normal stock receipt with their supplier document rather
+than attempting to bypass this protection. Old jobs have no fingerprint.
+
+Legacy jobs
+Pre-upgrade READY jobs can safely enter the new protocol. Pre-upgrade COMMITTING
+jobs remain blocked for manual reconciliation: they may have already applied a
+row without recording its result. No status reset or blind replay is provided.
+No historical data is deleted or rewritten. Whole files are not atomic: earlier
+successful rows remain committed if a later row or finalization stops.
+
+Verification
+Source review and syntax checks only. Lint, tests, build and browser/runtime
+checks are skipped as requested. Regression cases are supplied but not executed.
+Before production, verify process interruption before/after COMMIT, concurrent
+resumes, stale tokens, same-file validation races, tenant/type permissions,
+business-error rollback, completion-event rollback and mobile/keyboard behavior
+using isolated fixtures, never live stock.

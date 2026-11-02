@@ -17,7 +17,7 @@ export function createBulkOperationsRouter({ bulkOperationsService = defaultServ
   const types = [
     { path: "products", type: "PRODUCT", read: "catalog.product.read", manage: "catalog.product.create" },
     { path: "pricing", type: "PRICING", read: "catalog.offer.read", manage: "catalog.offer.manage" },
-    { path: "inventory", type: "INVENTORY", read: "inventory.stock.read", manage: "inventory.stock.receive" }
+    { path: "inventory", type: "INVENTORY", read: "inventory.stock.read", manage: "inventory.stock.manage" }
   ];
   for (const item of types) {
     router.get(`/bulk/${item.path}/template`, authorize(item.read), controller.template(item.type));

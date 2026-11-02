@@ -1,0 +1,79 @@
+IN-APP NOTIFICATION PREFERENCES - 2 November 2026
+
+Scope
+Admin and customer inboxes only. Each person edits only their own preferences.
+No email delivery, account/security email, browser push, newsletter, business
+workflow, permissions, source event generation or other people's settings change.
+Vendor and platform inboxes retain existing behavior and expose no preferences UI.
+
+Deployment
+1. Apply migration 041_inbox_preferences.sql with npm run db:migrate.
+2. Restart the API if not watching; refresh admin/storefront applications.
+3. IMPORTANT: restart any existing inbox worker so it loads the new delivery DAO.
+   From ecommerce-backend run npm run notifications:inbox in its normal terminal.
+   Local installation may start this existing worker with explicit approval.
+   It is not installed as a service and will not auto-start after a reboot.
+   An older worker will not honor these preferences. Do not run old/new versions
+   together during deployment. Stop/drain old workers before accepting changes.
+   Starting it processes queued in-app updates; it sends no email and does not
+   replay the underlying order/payment/import/stock operation.
+4. Bell > Notification preferences. Uncheck optional updates > Save preferences.
+   Enable all optional updates changes the form only; save explicitly to apply.
+
+Choices
+Admin optional: Inventory, Warranties, Imports, Product/vendor approvals.
+Admin always on: Orders/delivery, Returns/exchanges, Payments.
+Customer optional: Returns/exchanges, Warranties.
+Customer always on: Orders/delivery, Payments.
+All default to enabled. Unknown/new notification categories remain enabled.
+Existing role-based visibility still applies; opting in never grants permissions.
+
+Scope and data
+Admin preferences are per user/tenant, covering that workspace's stores.
+Customer preferences are per customer/tenant/store. Authenticated inbox scope,
+not request-body IDs, selects the recipient. The API returns only own settings.
+GET /api/admin/v1/notifications/preferences
+PUT same path, body {revision, disabledCategories:[...]}
+Customer equivalent: /api/storefront/v1/:tenantCode/stores/:storeCode/account/
+notifications/preferences, through existing same-origin /api/customer proxy.
+GET is read-only. Save serializes on the active principal, checks a revision and
+commits preferences plus audit together. Stale tabs must Reload saved preferences
+before saving again. The reload button explicitly discards local checkbox edits.
+No new roles/permissions, dependencies, Docker, Redis or task workers are added.
+
+Delivery semantics
+Preferences apply when a NEW inbox recipient row is created, including queued
+events not yet processed. A delivery already in progress can use the prior
+choice; this is not a recall mechanism. The worker stores suppressed_at for an
+optional category opted out in that exact scope. Suppressed rows are absent from
+list/unread/read-mutation visibility. Notification title/message stays on the
+original event; suppressed rows do not copy message content.
+Mandatory/unknown/non-supported-audience categories never consult opt-outs.
+Historical rows default to visible. Saving preferences does not delete, mark-read,
+hide or reveal existing history. Re-enabling does not backfill muted deliveries.
+Existing unique event/recipient keys preserve the first delivery decision on
+retry; replay cannot retroactively suppress or reveal an existing recipient row.
+Delivery offset and processed-recipient counts include preference-suppressed
+snapshots. PROCESSED still means recipient decisions finished, not that people
+read messages. Worker retry, heartbeat and business idempotency are unchanged.
+
+UI
+Preferences open inside the existing native top-layer inbox dialog. Internal
+scrolling, keyboard wrap/Escape, reduced motion, header and footer are retained.
+Focus moves to the preferences heading. New forms have visible labels, optional
+checkboxes, an Always enabled section, explicit save and inline failure/retry.
+Customer save feedback uses the existing Sonner toaster inside the dialog.
+Save requests time out after about 20 seconds; close controls unlock afterward.
+No preferences are persisted to local/session storage. Account/workspace changes
+unmount the scoped panel and cancel requests; late results cannot fill a new
+account's form. Access-token refresh does not erase checkbox edits.
+
+Verification
+Source/JS/JSX/CSS syntax, imports, proxy allowlist and diffs reviewed only.
+Regression cases supplied but NOT executed. Lint/tests/build and browser/runtime
+verification remain skipped as requested. No real preferences or notifications
+were changed/sent to verify behavior. Later isolated checks must cover CAS races,
+principal revocation, cross-tenant/store isolation, mandatory category protection,
+worker preference snapshots, rollback/replay, muted unread/cutoff behavior,
+cross-tab stale settings, proxy method/origin/query handling and accessible
+responsive light/dark dialogs. Schema application alone is not verification.

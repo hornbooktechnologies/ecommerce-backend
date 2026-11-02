@@ -5,10 +5,11 @@ import * as defaultDao from "./inbox.dao.js";
 import * as accountDao from "../customer-accounts/customer-accounts.dao.js";
 import { resolveStore } from "../storefront/storefront.dao.js";
 import { findPlatformAccess } from "../platform-access/platform-access.dao.js";
+import { createInboxPreferencesService } from "./inbox-preferences.service.js";
 
 const fail = (code, message, status) => { throw new AppError({ code, message, status }); };
 export function createInboxService({ dao = defaultDao, accounts = accountDao,
-  storeResolver = resolveStore, platformAccess = findPlatformAccess } = {}) {
+  storeResolver = resolveStore, platformAccess = findPlatformAccess, preferences = createInboxPreferencesService() } = {}) {
   async function userScope(context, audience) {
     const actor = context.actor;
     if (!actor || !await dao.activeSession(actor)) fail("AUTHENTICATION_REQUIRED", "Your session is invalid or has expired.", 401);
@@ -34,6 +35,8 @@ export function createInboxService({ dao = defaultDao, accounts = accountDao,
   }
   return {
     userScope, customerScope,
+    preferences: (scope) => preferences.get(scope),
+    savePreferences: (scope, input) => preferences.save(scope, input),
     async list(scope, filters) {
       const result = await dao.list({ scope, ...filters });
       return { ...result, page: filters.page, pageSize: filters.pageSize,

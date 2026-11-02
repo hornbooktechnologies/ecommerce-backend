@@ -13,6 +13,7 @@ function mapRating(row) {
     customerEmail: row.customer_email || null, orderId: bufferToUuid(row.customer_order_id),
     orderNumber: row.order_number || null, rating: number(row.rating), title: row.title || "",
     review: row.review_text || "", status: row.status, source: row.source,
+    photoCount:number(row.photo_count),pendingPhotoCount:number(row.pending_photo_count),
     verifiedPurchase: Boolean(row.verified_purchase), helpfulCount: number(row.helpful_count),
     moderationNotes: row.moderation_notes || "", moderatedByName: row.moderated_by_name || null,
     moderatedAt: iso(row.moderated_at), submittedAt: iso(row.submitted_at), updatedAt: iso(row.updated_at)
@@ -20,6 +21,8 @@ function mapRating(row) {
 }
 
 const ratingSelect = `SELECT pr.*, p.name AS product_name, p.product_code,
+  (SELECT COUNT(*) FROM review_photos ph WHERE ph.tenant_id=pr.tenant_id AND ph.review_id=pr.id AND ph.deleted_at IS NULL) photo_count,
+  (SELECT COUNT(*) FROM review_photos ph WHERE ph.tenant_id=pr.tenant_id AND ph.review_id=pr.id AND ph.deleted_at IS NULL AND ph.storage_state='READY' AND ph.status='PENDING') pending_photo_count,
   COALESCE((SELECT MIN(pv.sku) FROM product_variants pv
     WHERE pv.product_id = p.id AND pv.deleted_at IS NULL AND pv.status = 'ACTIVE'), '') AS sku,
   (SELECT ma.file_key FROM product_media pm JOIN media_assets ma ON ma.id = pm.media_asset_id
@@ -48,6 +51,7 @@ export async function listRatings({ tenantId, filters, connection = getPrimaryPo
   if (filters.status !== "ALL") { where.push("pr.status = ?"); params.push(filters.status); }
   if (filters.rating !== 0) { where.push("pr.rating = ?"); params.push(filters.rating); }
   if (filters.productId) { where.push("pr.product_id = ?"); params.push(uuidToBuffer(filters.productId)); }
+  if(filters.hasPendingPhotos)where.push("EXISTS(SELECT 1 FROM review_photos ph WHERE ph.tenant_id=pr.tenant_id AND ph.review_id=pr.id AND ph.deleted_at IS NULL AND ph.storage_state='READY' AND ph.status='PENDING')");
   const clause = where.join(" AND "); const offset = (filters.page - 1) * filters.pageSize;
   const [rowsResult, countResult, summaryResult, distributionResult] = await Promise.all([
     connection.execute(`${ratingSelect} WHERE ${clause}

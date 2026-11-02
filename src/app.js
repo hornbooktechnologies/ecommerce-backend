@@ -3,6 +3,7 @@ import express from "express";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { env } from "./config/env.js";
+import { resolveAppearance } from './config/appearance/appearance.js';
 import { logger } from "./config/logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFound } from "./middleware/not-found.js";
@@ -11,6 +12,7 @@ import { createAuthRouter } from "./modules/auth/auth.routes.js";
 import { createHealthRouter } from "./modules/health/health.routes.js";
 import { createPlatformTenantRouter } from "./modules/platform-tenants/platform-tenants.routes.js";
 import { createPlatformAccessRouter } from "./modules/platform-access/platform-access.routes.js";
+import { createPlatformDashboardRouter } from "./modules/platform-dashboard/platform-dashboard.routes.js";
 import { createAccessControlRouter } from "./modules/access-control/access-control.routes.js";
 import { createCatalogRouter } from "./modules/catalog/catalog.routes.js";
 import { createInventoryRouter } from "./modules/inventory/inventory.routes.js";
@@ -32,6 +34,7 @@ import { createBundlesRouter } from "./modules/bundles/bundles.routes.js";
 import { createMarketplaceFinanceRouter } from "./modules/marketplace-finance/marketplace-finance.routes.js";
 import { createReportsRouter } from "./modules/reports/reports.routes.js";
 import { createRatingsRouter } from "./modules/ratings/ratings.routes.js";
+import { createQuestionsRouter } from './modules/questions/questions.routes.js';
 import { createStorefrontRouter } from "./modules/storefront/storefront.routes.js";
 import { createStorefrontWishlistRouter } from "./modules/storefront-wishlist/storefront-wishlist.routes.js";
 import { createHomepageRouter } from "./modules/homepage/homepage.routes.js";
@@ -42,14 +45,19 @@ import { createPaymentsRouter } from "./modules/payments/payments.routes.js";
 import { createPaymentWebhookRouter } from "./modules/payments/payment-webhooks.js";
 import { createInboxRouter } from "./modules/notifications/inbox.routes.js";
 import { createDeliveryOperationsRouter } from "./modules/notifications/delivery-operations.routes.js";
+import { createPublicNewsletterRouter, createAdminNewsletterRouter } from "./modules/newsletter/newsletter.routes.js";
+import { createAdminStoreContentRouter, createPublicStoreContentRouter } from "./modules/store-content/store-content.routes.js";
 
 export function createApp({
   readinessCheck,
   inboxService,
   notificationDeliveryService,
+  newsletterService,
+  storeContentService,
   authenticationService,
   platformTenantService,
   platformAccessService,
+  platformDashboardService,
   platformAccessAuthorization,
   platformAuthorization,
   accessControlService,
@@ -126,17 +134,29 @@ export function createApp({
   app.use(express.json({ limit: "6mb" }));
 
   app.use("/health", createHealthRouter({ readinessCheck }));
+  // Public platform defaults only. Tenant overrides are returned through the
+  // authenticated user's permitted contexts, never selected by an anonymous query.
+  app.get('/api/admin/v1/appearance', (_req, res) => {
+    res.set('Cache-Control', 'no-store').json({ data: resolveAppearance('admin') });
+  });
+  app.use("/api/platform/v1/dashboard", createPlatformDashboardRouter({ service: platformDashboardService }));
   app.use("/api/admin/v1/notifications", createInboxRouter({ audience: "ADMIN", service: inboxService, resolveTenant: tenantAccessResolver }));
   app.use("/api/vendor/v1/notifications", createInboxRouter({ audience: "VENDOR", service: inboxService, resolveVendor: vendorAccessResolver }));
   app.use("/api/platform/v1/notifications", createInboxRouter({ audience: "PLATFORM", service: inboxService }));
   app.use("/api/platform/v1/notification-deliveries", createDeliveryOperationsRouter({ service: notificationDeliveryService }));
   app.use("/api/storefront/v1/:tenantCode/stores/:storeCode/account/notifications", createInboxRouter({ audience: "CUSTOMER", service: inboxService }));
   app.use("/api/storefront/v1", createStorefrontRouter({ service: storefrontService }));
+  app.use("/api/storefront/v1", createPublicNewsletterRouter({ service: newsletterService }));
+  app.use("/api/storefront/v1", createPublicStoreContentRouter({ service: storeContentService }));
   app.use("/api/storefront/v1", createCustomerAccountsRouter({ service: customerAccountsService }));
   app.use("/api/storefront/v1", createStorefrontCartRouter({ service: storefrontCartService }));
   app.use("/api/storefront/v1", createStorefrontWishlistRouter({ service: storefrontWishlistService }));
   app.use("/api/storefront/v1", createStorefrontCheckoutRouter({ service: storefrontCheckoutService }));
   app.use("/api/admin/v1/auth", createAuthRouter({ authenticationService }));
+  app.use("/api/admin/v1", createAdminNewsletterRouter({ service: newsletterService,
+    resolveTenant: tenantAccessResolver, authorize: tenantPermissionAuthorization }));
+  app.use("/api/admin/v1", createAdminStoreContentRouter({ service: storeContentService,
+    resolveTenant: tenantAccessResolver, authorize: tenantPermissionAuthorization }));
   app.use("/api/admin/v1", createPaymentsRouter({ service: paymentsService, resolveTenant: tenantAccessResolver }));
   app.use("/api/admin/v1", createHomepageRouter({ service: homepageService, sectionsService: homepageSectionsService,
     resolveTenant: tenantAccessResolver, authorize: tenantPermissionAuthorization }));
@@ -248,6 +268,8 @@ export function createApp({
     resolveTenant: tenantAccessResolver,
     authorize: tenantPermissionAuthorization
   }));
+  app.use('/api/admin/v1', createQuestionsRouter({resolveAccess:tenantAccessResolver,authorize:tenantPermissionAuthorization}));
+  app.use('/api/vendor/v1', createQuestionsRouter({vendor:true,resolveAccess:vendorAccessResolver,authorize:vendorPermissionAuthorization}));
   app.use("/api/vendor/v1", createVendorPortalRouter({ vendorPortalService,
     resolveVendor: vendorAccessResolver, authorize: vendorPermissionAuthorization }));
 

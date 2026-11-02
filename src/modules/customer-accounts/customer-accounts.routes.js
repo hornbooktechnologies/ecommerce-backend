@@ -1,7 +1,11 @@
-import { Router } from "express";
+import { Router, raw } from "express";
+import * as photos from '../review-photos/review-photos.service.js';
+import * as photoInput from '../review-photos/review-photos.validators.js';
 import Joi from "joi";
 import { createCustomerAccountsService } from "./customer-accounts.service.js";
 import { schemas, validate } from "./customer-accounts.validators.js";
+import * as questions from '../questions/questions.service.js';
+import {askSchema,mineSchema,withdrawSchema,validate as validateQuestion} from '../questions/questions.validators.js';
 
 export const orderSchemas = {
   cancel: Joi.object({ orderId: Joi.string().guid().required(), reason: Joi.string().trim().min(3).max(1000).required() }),
@@ -34,6 +38,17 @@ export function createCustomerAccountsRouter({ service = createCustomerAccountsS
     router.post(`${base}/${path}`, async (req, res) => data(res, await service[method](req.customerScope, validate(schema, req.body))));
   }
   router.get(`${base}/me`, async (req, res) => data(res, await service.me(req.customerScope, req.customerToken)));
+  const photoIds = req => ({reviewId:photoInput.validate(photoInput.uuid,req.params.reviewId),photoId:req.params.photoId?photoInput.validate(photoInput.uuid,req.params.photoId):undefined});
+  router.get(`${base}/reviews/:reviewId/photos`,async(req,res)=>data(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>photos.listOwn(req.customerScope,account,photoIds(req).reviewId,connection))));
+  router.post(`${base}/reviews/:reviewId/photos/:photoId`,async(req,res,next)=>{
+    req.photoIds=photoIds(req);req.photoAlt=photoInput.validate(photoInput.uploadQuery,req.query).alt;
+    await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>photos.preflight(req.customerScope,account,req.photoIds.reviewId,req.photoIds.photoId,connection));next();
+  },raw({type:['image/jpeg','image/png','image/webp'],limit:5*1024*1024}),async(req,res)=>data(res,await photos.upload({store:req.customerScope,token:req.customerToken,...req.photoIds,buffer:req.body,mime:req.get('content-type')?.split(';')[0],alt:req.photoAlt,accounts:service})));
+  router.get(`${base}/reviews/:reviewId/photos/:photoId/file`,async(req,res)=>{const ids=photoIds(req);photoInput.sendPhoto(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>photos.ownFile(req.customerScope,account,ids.reviewId,ids.photoId,connection)));});
+  router.delete(`${base}/reviews/:reviewId/photos/:photoId`,async(req,res)=>{const ids=photoIds(req),input=photoInput.validate(photoInput.removal,req.body);const result=await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>photos.removeOwn(req.customerScope,account,ids.reviewId,ids.photoId,input.version,connection));data(res,await photos.finishRemoval(req.customerScope.tenantId,ids.photoId,result.key));});
+  router.post(`${base}/questions/ask`,async(req,res)=>data(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>questions.ask(req.customerScope,account,validateQuestion(askSchema,req.body),connection))));
+  router.post(`${base}/questions/list`,async(req,res)=>data(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>questions.mine(req.customerScope,account,validateQuestion(mineSchema,req.body),connection))));
+  router.post(`${base}/questions/withdraw`,async(req,res)=>data(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>questions.withdraw(req.customerScope,account,validateQuestion(withdrawSchema,req.body),connection))));
   router.post(`${base}/orders/list`, async (req, res) => data(res, await service.orders(req.customerScope, req.customerToken, validate(orderSchemas.list, req.body))));
   router.post(`${base}/orders/read`, async (req, res) => data(res, await service.order(req.customerScope, req.customerToken, validate(orderSchemas.read, req.body))));
   router.post(`${base}/orders/after-sales`, async (req, res) => data(res, await service.afterSales(req.customerScope, req.customerToken, validate(orderSchemas.read, req.body))));

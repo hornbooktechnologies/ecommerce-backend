@@ -1,3 +1,5 @@
+import { resolveAppearance } from '../../config/appearance/appearance.js';
+
 const navigationCatalog = {
   // Add an item only after its page and end-to-end workflow are implemented.
   // Permissions decide who may see an implemented item; they must not expose
@@ -17,12 +19,15 @@ const navigationCatalog = {
     { label: "Warranties", href: "/admin/warranties", icon: "warranties", capability: "warranty.read" },
     { label: "Catalog", href: "/admin/catalog/products", matchPrefix: "/admin/catalog", icon: "catalog", capability: "catalog.product.read" },
     { label: "Product ratings", href: "/admin/ratings", icon: "ratings", capability: "rating.read" },
+    { label: 'Product questions', href: '/admin/questions', icon: 'questions', capability: 'question.read' },
     { label: "Seller pricing", href: "/admin/offers", icon: "offers", capability: "catalog.offer.read" },
     { label: "Inventory", href: "/admin/inventory", icon: "inventory", capability: "inventory.stock.read" },
     { label: "Procurement", href: "/admin/procurement", icon: "procurement", capability: "procurement.read" },
     { label: "Bulk operations", href: "/admin/bulk-operations", icon: "bulk", capability: "bulk.read" },
     { label: "Stores", href: "/admin/stores", icon: "stores", capability: "settings.store.read" },
     { label: "Homepage", href: "/admin/homepage", icon: "homepage", capability: "settings.store.read" },
+    { label: "Newsletter", href: "/admin/newsletter", icon: "newsletter", capability: "newsletter.read" },
+    { label: "Store pages", href: "/admin/store-pages", icon: "content", capability: "store.content.read" },
     { label: "Vendors", href: "/admin/vendors", icon: "vendors", capability: "vendor.read" },
     { label: "Finance", href: "/admin/finance", icon: "finance", capability: "marketplace.settlement.read" },
     { label: "Reports", href: "/admin/reports", icon: "reports", capability: "report.sales.read" },
@@ -32,7 +37,8 @@ const navigationCatalog = {
   ],
   vendor: [
     { label: "Overview", href: "/vendor", icon: "overview", capability: "vendor.dashboard.read" },
-    { label: "Orders", href: "/vendor/orders", icon: "orders", capability: "vendor.order.read" }
+    { label: "Orders", href: "/vendor/orders", icon: "orders", capability: "vendor.order.read" },
+    { label: 'Product questions', href: '/vendor/questions', icon: 'questions', capability: 'vendor.question.read' }
   ]
 };
 
@@ -48,7 +54,7 @@ function permissionsFor(assignments) {
 const adminGroups = [
   ["daily", "Daily operations", ["overview", "orders", "customers", "returns", "warranties"]],
   ["products", "Products & stock", ["catalog", "offers", "inventory", "procurement", "bulk"]],
-  ["storefront", "Storefront & marketing", ["homepage", "promotions", "ratings"]],
+  ["storefront", "Storefront & marketing", ["homepage", "promotions", "ratings", "questions", "newsletter", "content"]],
   ["business", "Business management", ["stores", "vendors", "finance", "reports"]],
   ["settings", "Settings", ["taxes", "users", "access"]]
 ];
@@ -85,6 +91,11 @@ export function buildUiConfiguration(assignments) {
   const vendor = tenantContexts(assignments, "VENDOR", "vendor");
 
   return {
+    appearance: {
+      platform: resolveAppearance('admin'),
+      admin: Object.fromEntries(Object.keys(admin.capabilities).map(tenantId => [tenantId, resolveAppearance('admin', tenantId)])),
+      vendor: Object.fromEntries(Object.keys(vendor.capabilities).map(tenantId => [tenantId, resolveAppearance('admin', tenantId)]))
+    },
     navigation: {
       platform: allowedNavigation("platform", platformCapabilities, platformUnrestricted),
       admin: admin.navigation,

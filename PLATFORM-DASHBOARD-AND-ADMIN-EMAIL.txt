@@ -1,0 +1,71 @@
+PLATFORM OVERVIEW AND ADMIN RESET EMAIL — 2 November 2026
+
+Platform overview
+GET /api/platform/v1/dashboard uses platform.dashboard.read, a current non-revoked
+session and active platform membership/roles. Migration 042 registers the permission;
+only the existing platform_super_admin role is granted it automatically. Use Platform
+team for explicit custom-role grants. Existing tenant/vendor users gain no access.
+Existing overview grants from migration 025 remain intact; 042 is idempotent
+catalog assurance and does not revoke existing approved platform-role grants.
+Recent tenant details additionally require platform.tenant.read.
+
+Counts are read in a MariaDB consistent, read-only snapshot. Active tenant staff is
+distinct active users with active memberships in active tenants; customers/platform-
+only users are not counted. Active stores belong to active non-deleted tenants.
+The latest ten tenant records are ordered by tenant.updated_at, not browsing activity.
+Deleted records are excluded. No uptime, fake activity times or unmeasured job-health
+statistics are claimed. Loading/errors/empty states replace fabricated defaults.
+
+Admin password-reset email
+Uses existing SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS (or
+SMTP_PASSWORD), SMTP_FROM and ADMIN_APP_URL. Keep credentials in .env, never docs.
+ADMIN_APP_URL must be the actual admin origin. HTTPS is mandatory in production;
+HTTP is permitted only for local development loopback hosts. No new provider needed.
+SMTP_PORT defaults to 465; implicit TLS defaults on for 465. SMTP_SECURE may be
+true/false; STARTTLS is required when implicit TLS is disabled.
+
+Request reset in /forgot-password. Email links open /reset-password#token=...;
+the fragment never goes to the server. The client reads it into memory once and
+removes it from the address bar. Reloading after that needs reopening the original
+email link. Older query-token links still work during transition, then are cleared.
+The reset route is noindex/no-referrer. Password managers and paste remain usable.
+
+The API never returns plaintext/development reset tokens, including development.
+Configuration failure returns a shared 503 for every address. Otherwise active,
+missing, suspended, throttled and recipient-specific delivery failures return the
+same generic 202 response. This is privacy-preserving acceptance, not proof of inbox
+delivery. A safe operational warning records delivery failure without email/token.
+There is no claim of timing-oblivious account enumeration resistance.
+
+Limits: 3 requests per known user / 15 minutes and 30 public reset requests per IP /
+15 minutes, using existing database-backed limits. Configure trusted proxy/IP rate
+controls at deployment; no new trust-proxy setting is enabled here.
+
+Only token hashes are stored. Each eligible request invalidates older links; the
+latest request wins. SMTP happens outside the DB transaction. Failed sends revoke
+only that hash, not a newer concurrent token. Failed attempts still count toward
+the request limit. Token cleanup failure is an operational error, never swallowed.
+No automatic SMTP retry (ambiguous acceptance could otherwise duplicate mail).
+
+Existing reset rules remain: 30-minute expiry, single-use, no password reuse and
+session revocation on successful reset. Requesting a link does NOT change passwords
+or revoke login sessions. Mail scanners cannot reset a password just by opening it.
+This applies to platform, tenant and vendor user accounts; customer account email
+and newsletter flows remain unchanged.
+
+Deployment
+Install source + migration 042, run the existing db:migrate command, then restart
+or let the API reload and refresh the admin page/session. No Docker, Redis, new
+dependency or new worker. Custom roles need an explicit overview permission grant.
+
+Verification
+See the delivery handoff for checks actually performed. Lint, automated tests and
+production builds remain skipped at the user's request. Real-recipient password
+change must be performed by the account owner; never share reset links or passwords.
+Live checks completed: aggregate counts matched direct SQL; tenant/anonymous access
+was denied; separate tenant-read permission was enforced; freshly revoked permission
+and session were denied. Desktop skeleton/error/retry behavior and a 375px width
+overflow check passed. The email owner confirmed receipt and that the reset form
+opened. Unknown-email responses exposed no link/token; an unissued token was rejected.
+Successful password submission, SMTP-failure injection, race/load tests and a full
+accessibility audit were not performed in this pass. No real password was changed.

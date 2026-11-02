@@ -93,6 +93,7 @@ export function createCustomerAccountsService({ dao = defaultDao, storeResolver 
   }
   return {
     scope,
+    withAuthenticatedAccount: withAccount,
     async ipLimit(store, ip) { await throttle(store, `ip:${ip}`, 300); await dao.pruneExpired({}); },
     register: (store, input) => requestEmail(store, input, "REGISTER"),
     forgot: (store, input) => requestEmail(store, input, "RESET"),

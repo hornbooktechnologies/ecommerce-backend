@@ -5,12 +5,11 @@ import { createId } from "../../core/identifiers/uuid.js";
 import { hashPassword, verifyPassword } from "../../core/security/password.js";
 import {
   createAccessToken,
-  createPasswordResetToken,
   createRefreshToken,
   hashPasswordResetToken,
   hashRefreshToken
 } from "../../core/security/tokens.js";
-import { env } from "../../config/env.js";
+import { createAdminResetService } from "./admin-reset.service.js";
 import { refreshTokenLifetimeMs } from "./auth.cookies.js";
 import * as authDao from "./auth.dao.js";
 import { buildUiConfiguration } from "./ui-configuration.js";
@@ -173,27 +172,7 @@ export async function logout({ refreshToken }) {
   }
 }
 
-const resetLifetimeMs = 30 * 60 * 1000;
-const resetResponseMessage = "If an active account matches that email, password reset instructions are ready.";
-
-export async function requestPasswordReset({ email, ipAddress, userAgent }) {
-  let developmentResetToken = null;
-  await withTransaction(null, async (connection) => {
-    const user = await authDao.findUserByEmail({ email: email.trim().toLowerCase(), connection,
-      forUpdate: true });
-    if (!user || user.status !== "ACTIVE") return;
-    if (await authDao.countRecentPasswordResetRequests({ userId: user.id, connection }) >= 3) return;
-    await authDao.invalidatePasswordResetTokens({ userId: user.id, connection });
-    const token = createPasswordResetToken();
-    await authDao.insertPasswordResetToken({ reset: { id: createId(), userId: user.id,
-      tokenHash: hashPasswordResetToken(token), ipAddress, userAgent: userAgent?.slice(0, 500) || null,
-      expiresAt: new Date(Date.now() + resetLifetimeMs) }, connection });
-    if (env.nodeEnv === "development") developmentResetToken = token;
-  });
-  return { message: resetResponseMessage, expiresInMinutes: 30,
-    ...(developmentResetToken ? { developmentResetUrl:
-      `${env.adminAppUrl}/reset-password?token=${encodeURIComponent(developmentResetToken)}` } : {}) };
-}
+export const requestPasswordReset = createAdminResetService().request;
 
 function invalidResetToken() {
   return new AppError({ code: "PASSWORD_RESET_TOKEN_INVALID",

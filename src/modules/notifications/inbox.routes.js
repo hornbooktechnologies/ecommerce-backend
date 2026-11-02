@@ -8,7 +8,7 @@ import { createInboxService } from "./inbox.service.js";
 
 export const inboxSchemas = {
   list: Joi.object({
-    category: Joi.string().uppercase().valid("ALL", "ORDERS", "RETURNS", "PAYMENTS", "INVENTORY", "WARRANTIES", "IMPORTS", "APPROVALS", "TENANTS").default("ALL"),
+    category: Joi.string().uppercase().valid("ALL", "ORDERS", "RETURNS", "PAYMENTS", "INVENTORY", "WARRANTIES", "IMPORTS", "APPROVALS", "TENANTS", "QUESTIONS").default("ALL"),
     search: Joi.string().trim().max(100).allow("").default(""),
     filter: Joi.string().uppercase().valid("ALL", "UNREAD").default("ALL"),
     page: Joi.number().integer().min(1).max(10000).default(1), pageSize: Joi.number().integer().valid(10, 20, 50).default(10) }),
@@ -34,6 +34,8 @@ export function createInboxRouter({ audience, service = createInboxService(),
   });
   router.get("/", async (req, res) => res.json({ data: await service.list(req.inboxScope, validate(inboxSchemas.list, req.query)) }));
   router.get("/unread-count", async (req, res) => res.json({ data: await service.unread(req.inboxScope) }));
+  router.get("/preferences", async (req, res) => res.json({ data: await service.preferences(req.inboxScope) }));
+  router.put("/preferences", async (req, res) => res.json({ data: await service.savePreferences(req.inboxScope, req.body) }));
   router.post("/read-all", async (req, res) => res.json({ data: await service.markAll(req.inboxScope, validate(inboxSchemas.all, req.body).throughId) }));
   router.patch("/:notificationId", async (req, res) => res.json({ data: await service.mark(req.inboxScope,
     validate(inboxSchemas.item, req.params.notificationId), validate(inboxSchemas.mark, req.body).read) }));

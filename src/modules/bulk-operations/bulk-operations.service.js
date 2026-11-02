@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AppError } from "../../core/errors/app-error.js";
 import { createId } from "../../core/identifiers/uuid.js";
 import { withTransaction } from "../../database/transaction.js";
@@ -46,8 +47,18 @@ function assertHeaders(type, actual) {
     missing.map((field) => fieldError(field, "This column is required.")));
 }
 
+function servicesInTransaction(connection) {
+  // These service factories already accept a transaction dependency. Reuse all
+  // business validation, audit and outbox code on the import row's connection;
+  // never let a business service independently commit before markRow.
+  const transaction = (_tenantId, operation) => operation(connection);
+  return { catalogService: catalog.createCatalogService({ transaction }),
+    offersService: offers.createOffersService({ transaction }),
+    inventoryService: inventory.createInventoryService({ transaction }) };
+}
+
 export function createBulkOperationsService({ dao = defaultDao, transaction = withTransaction,
-  catalogService = catalog, offersService = offers, inventoryService = inventory } = {}) {
+  catalogService = catalog, rowServices = servicesInTransaction } = {}) {
   async function validationContext(tenantId, type) {
     if (type === "PRODUCT") {
       const [lookups, existing] = await Promise.all([catalogService.ensureDefaults(tenantId), dao.existingCatalogKeys({ tenantId })]);
@@ -144,10 +155,21 @@ export function createBulkOperationsService({ dao = defaultDao, transaction = wi
     assertHeaders(type, parsed.headers);
     if (!parsed.rows.length) fail("CSV_EMPTY", "The CSV has headers but no data rows.");
     if (parsed.rows.length > 5000) fail("CSV_TOO_LARGE", "A single import can contain at most 5,000 rows.", 413);
+    // The same parsed inventory file belongs to one durable job per tenant,
+    // including concurrent validation requests. File names and column order do
+    // not change its identity. This is not cross-file/per-delivery deduplication.
+    const inventoryFingerprint = type === "INVENTORY" ? createHash("sha256").update(JSON.stringify(
+      parsed.rows.map(({ data }) => Object.keys(data).sort().map((key) => [key, data[key]]))
+    )).digest("hex") : null;
+    if (inventoryFingerprint) {
+      const existingId = await dao.findInventoryFile({ tenantId, fingerprint: inventoryFingerprint });
+      if (existingId) return { ...await getJob(tenantId, existingId), reused: true };
+    }
     const jobId = createId(); const validation = await validationContext(tenantId, type);
     const fileKeys = { productCodes: new Set(), skus: new Set() }; let valid = 0; let invalid = 0;
-    await transaction(tenantId, async (connection) => {
-      await dao.insertJob({ job: { id: jobId, tenantId, type, fileName: input.fileName, createdBy: context.actorUserId }, connection });
+    try { await transaction(tenantId, async (connection) => {
+      await dao.insertJob({ job: { id: jobId, tenantId, type, fileName: input.fileName,
+        inventoryFingerprint, createdBy: context.actorUserId }, connection });
       for (const source of parsed.rows) {
         const result = type === "PRODUCT" ? normalizeProduct(source.data, validation, fileKeys)
           : type === "PRICING" ? normalizePricing(source.data, validation) : normalizeInventory(source.data, validation);
@@ -156,7 +178,13 @@ export function createBulkOperationsService({ dao = defaultDao, transaction = wi
           status: result.errors.length ? "INVALID" : "VALID", normalized: result.normalized, errors: result.errors }, connection });
       }
       await dao.finishValidation({ tenantId, jobId, counts: { total: parsed.rows.length, valid, invalid }, connection });
-    });
+    }); } catch (error) {
+      if (inventoryFingerprint && error.code === "ER_DUP_ENTRY") {
+        const existingId = await dao.findInventoryFile({ tenantId, fingerprint: inventoryFingerprint });
+        if (existingId) return { ...await getJob(tenantId, existingId), reused: true };
+      }
+      throw error;
+    }
     return getJob(tenantId, jobId);
   }
 
@@ -168,29 +196,65 @@ export function createBulkOperationsService({ dao = defaultDao, transaction = wi
   }
 
   async function commitImport(tenantId, type, jobId, context) {
-    const job = await dao.findJob({ tenantId, jobId });
-    if (!job || job.type !== type) fail("IMPORT_JOB_NOT_FOUND", "Import job was not found.", 404);
-    if (job.invalidRows) fail("IMPORT_HAS_ERRORS", "Resolve every validation error and upload the corrected CSV before committing.", 409);
-    if (job.status !== "READY") fail("IMPORT_NOT_READY", "This import has already been committed or is not ready.", 409);
-    if (!await dao.claimJob({ tenantId, jobId })) fail("IMPORT_NOT_READY", "Another request already started this import.", 409);
-    const rows = await dao.listRows({ tenantId, jobId, status: "VALID" }); let committed = 0; let failed = 0;
-    for (const row of rows) {
+    const runToken = createId();
+    const alreadyComplete = await transaction(tenantId, async (connection) => {
+      const job = await dao.findJob({ tenantId, jobId, connection, forUpdate: true });
+      if (!job || job.type !== type) fail("IMPORT_JOB_NOT_FOUND", "Import job was not found.", 404);
+      if (["COMPLETED", "COMPLETED_WITH_ERRORS"].includes(job.status)) return true;
+      if (job.invalidRows) fail("IMPORT_HAS_ERRORS", "Resolve every validation error and upload the corrected CSV before committing.", 409);
+      if (job.needsManualReview) fail("IMPORT_REVIEW_REQUIRED",
+        "This older interrupted import needs manual reconciliation. Do not upload it again: some stock may already have been received.", 409);
+      if (!await dao.claimJob({ tenantId, jobId, runToken, connection })) fail("IMPORT_BUSY",
+        "This import is running or cannot be resumed yet. Refresh its status; an interrupted run becomes resumable after five minutes without progress.", 409);
+      await dao.auditRun({ tenantId, jobId, resumed: job.status === "COMMITTING", context, connection });
+      return false;
+    });
+    if (alreadyComplete) return getJob(tenantId, jobId);
+
+    const lock = async (connection) => {
+      if (!await dao.lockRun({ tenantId, jobId, runToken, connection })) fail("IMPORT_RUN_REPLACED",
+        "Another request resumed this import. Refresh to see its current result.", 409);
+    };
+    for (;;) {
+      let row = null;
       try {
-        if (type === "PRODUCT") await catalogService.createProduct(tenantId, row.normalized, context);
-        else if (type === "PRICING") await offersService.updateOffer(tenantId, row.normalized.offerId, {
-          listPrice: row.normalized.listPrice, salePrice: row.normalized.salePrice, costPrice: row.normalized.costPrice,
-          status: row.normalized.status, priceListId: row.normalized.priceListId
-        }, context);
-        else await inventoryService.receiveStock(tenantId, row.normalized, context);
-        await dao.markRow({ rowId: row.id, status: "COMMITTED" }); committed += 1;
+        const done = await transaction(tenantId, async (connection) => {
+          await lock(connection);
+          row = await dao.findNextRow({ tenantId, jobId, connection });
+          if (!row) {
+            await dao.finishCommit({ tenantId, jobId, actorUserId: context.actorUserId, connection });
+            return true;
+          }
+          const services = rowServices(connection);
+          if (type === "PRODUCT") await services.catalogService.createProduct(tenantId, row.normalized, context);
+          else if (type === "PRICING") await services.offersService.updateOffer(tenantId, row.normalized.offerId, {
+            listPrice: row.normalized.listPrice, salePrice: row.normalized.salePrice, costPrice: row.normalized.costPrice,
+            status: row.normalized.status, priceListId: row.normalized.priceListId
+          }, context);
+          else await services.inventoryService.receiveStock(tenantId, row.normalized, context);
+          await dao.markRow({ tenantId, jobId, rowId: row.id, status: "COMMITTED", connection });
+          return false;
+        });
+        if (done) break;
       } catch (error) {
-        await dao.markRow({ rowId: row.id, status: "FAILED", errors: [{ field: "row", code: error.code || "commit_failed",
-          message: error.message || "The row could not be committed." }] }); failed += 1;
+        if (error.code === "IMPORT_RUN_REPLACED") throw error;
+        // Unknown/infrastructure errors stop the runner. Do not label a row
+        // failed after an ambiguous COMMIT response: its atomic result is the
+        // authoritative receipt. A later runner will reread it under the lock.
+        if (!row || !(error instanceof AppError) || error.status < 400 || error.status >= 500) {
+          fail("IMPORT_INTERRUPTED", "Import processing stopped. Refresh this job instead of uploading the file again. If it remains interrupted, resume after five minutes without progress.", 503);
+        }
+        // The failed business transaction has rolled back. Persist only known
+        // business errors in a fresh, fenced transaction, without replaying it.
+        await transaction(tenantId, async (connection) => {
+          await lock(connection);
+          const next = await dao.findNextRow({ tenantId, jobId, connection });
+          if (next?.id !== row.id) fail("IMPORT_RUN_REPLACED", "Import progress changed. Refresh this job.", 409);
+          await dao.markRow({ tenantId, jobId, rowId: row.id, status: "FAILED",
+            errors: [{ field: "row", code: error.code, message: error.message }], connection });
+        });
       }
     }
-    await transaction(tenantId, async (connection) => {
-      await dao.finishCommit({ tenantId, jobId, actorUserId: context.actorUserId, committed, failed, connection });
-    });
     return getJob(tenantId, jobId);
   }
 

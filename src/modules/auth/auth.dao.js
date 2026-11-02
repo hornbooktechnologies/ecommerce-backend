@@ -88,6 +88,10 @@ export async function insertPasswordResetToken({ reset, connection }) {
   );
 }
 
+export async function invalidatePasswordResetTokenHash({ tokenHash, connection = getPrimaryPool() }) {
+  await connection.execute("UPDATE password_reset_tokens SET used_at = UTC_TIMESTAMP(6) WHERE token_hash = ? AND used_at IS NULL", [tokenHash]);
+}
+
 export async function findPasswordResetTokenForUpdate({ tokenHash, connection }) {
   const [rows] = await connection.execute(
     `SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at,

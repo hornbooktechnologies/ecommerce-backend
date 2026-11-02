@@ -1,4 +1,6 @@
 import { Router } from "express";
+import * as photos from '../review-photos/review-photos.service.js';
+import * as photoInput from '../review-photos/review-photos.validators.js';
 import { requirePermission, resolveTenantAccess } from "../access-control/access-control.middleware.js";
 import { authenticate } from "../auth/auth.middleware.js";
 import * as defaultService from "./ratings.service.js";
@@ -11,6 +13,10 @@ export function createRatingsRouter({ ratingsService = defaultService,
   const router = Router(); const controller = createRatingsController(ratingsService);
   router.use(authenticate, resolveTenant);
   router.get("/ratings/options", authorize("rating.read"), controller.options);
+  const ids=req=>({reviewId:photoInput.validate(photoInput.uuid,req.params.ratingId),photoId:req.params.photoId?photoInput.validate(photoInput.uuid,req.params.photoId):undefined});
+  router.get('/ratings/:ratingId/photos',authorize('rating.read'),async(req,res)=>res.json({data:await photos.adminList(req.context.tenant.tenantId,ids(req).reviewId)}));
+  router.get('/ratings/:ratingId/photos/:photoId/file',authorize('rating.read'),async(req,res)=>{const input=ids(req);photoInput.sendPhoto(res,await photos.adminFile(req.context.tenant.tenantId,input.reviewId,input.photoId));});
+  router.post('/ratings/:ratingId/photos/:photoId/moderate',authorize('rating.read'),authorize('rating.moderate'),async(req,res)=>{const input=ids(req);res.json({data:await photos.moderate(req.context.tenant.tenantId,input.reviewId,input.photoId,photoInput.validate(photoInput.moderation,req.body),{actorUserId:req.context.actor.userId})});});
   router.get("/ratings", authorize("rating.read"), validateQuery(listRatingsSchema), controller.list);
   router.get("/ratings/:ratingId", authorize("rating.read"), validateParams(ratingParamsSchema), controller.get);
   router.post("/ratings/:ratingId/moderate", authorize("rating.moderate"),

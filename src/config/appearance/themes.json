@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "admin": {
+      "mode": "system",
+      "typography": { "bodyFont": "manrope", "headingFont": "manrope", "fontSize": 14, "fontStyle": "normal", "lineHeight": 1.5 },
+      "effects": { "cornerScale": 1, "shadow": "existing" },
+      "colors": {
+        "light": { "primary": "#1f6d52", "primaryHover": "#14563f", "button": "#1f6d52", "buttonHover": "#185b45", "background": "#f5f4f0", "surface": "#fbfaf7", "text": "#17191d", "muted": "#656971", "border": "#deddd8", "soft": "#e3f0e9", "header": "#fbfaf7", "headerText": "#17191d", "sidebar": "#edf2ed", "sidebarText": "#203029", "sidebarMuted": "#5e6e65", "sidebarActive": "#1f6d52", "sidebarActiveText": "#ffffff" },
+        "dark": { "primary": "#60d5b0", "primaryHover": "#94e8cd", "button": "#34c99a", "buttonHover": "#63d9b5", "background": "#0e1822", "surface": "#17232e", "text": "#edf3f8", "muted": "#a8bac9", "border": "#304151", "soft": "#193b37", "header": "#17232e", "headerText": "#edf3f8", "sidebar": "#111d27", "sidebarText": "#edf3f8", "sidebarMuted": "#a8bac9", "sidebarActive": "#1b433d", "sidebarActiveText": "#edf3f8" }
+      }
+    },
+    "storefront": {
+      "mode": "light",
+      "typography": { "bodyFont": "dmSans", "headingFont": "manrope", "fontSize": 14, "fontStyle": "normal", "lineHeight": 1.6 },
+      "effects": { "cornerScale": 1, "shadow": "existing" },
+      "colors": {
+        "light": { "primary": "#4f6043", "primaryHover": "#374632", "button": "#4f6043", "buttonHover": "#374632", "background": "#fcfbf8", "surface": "#ffffff", "text": "#252b26", "muted": "#656b60", "border": "#e9e9e1", "soft": "#f1f1e9", "header": "#435449", "headerText": "#ffffff", "sidebar": "#fcfbf8", "sidebarText": "#252b26", "sidebarMuted": "#656b60", "sidebarActive": "#e5ebe1", "sidebarActiveText": "#252b26" },
+        "dark": { "primary": "#7de0bd", "primaryHover": "#a0ebd1", "button": "#53cba3", "buttonHover": "#7de0bd", "background": "#101b24", "surface": "#182832", "text": "#eef5f7", "muted": "#b0c1ca", "border": "#354b58", "soft": "#203b3c", "header": "#15242e", "headerText": "#eef5f7", "sidebar": "#15242e", "sidebarText": "#eef5f7", "sidebarMuted": "#b0c1ca", "sidebarActive": "#24473e", "sidebarActiveText": "#eef5f7" }
+      }
+    }
+  },
+  "tenants": {
+    "01a1166f-3d97-7000-9c57-e2444629b97a": {
+      "label": "Hornbook Retail",
+      "admin": {},
+      "storefront": {},
+      "stores": {
+        "01a1166f-3d97-7000-9c57-e9327257e825": { "label": "Hornbook MAIN", "storefront": {} }
+      }
+    }
+  }
+}

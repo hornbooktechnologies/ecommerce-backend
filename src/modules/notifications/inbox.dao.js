@@ -1,6 +1,8 @@
 import { getPrimaryPool } from "../../database/pool-factory.js";
 import { stockSourceJoins, stockSourceEligible } from "./stock-alerts.dao.js";
 import { createId, uuidToBuffer as id, bufferToUuid as uuid } from "../../core/identifiers/uuid.js";
+import { isOptionalCategory } from "./inbox-preferences.rules.js";
+import {vendorEligibility,visibleAnswer} from '../questions/questions.rules.js';
 
 const iso = (value) => value instanceof Date ? value.toISOString() : value;
 const decode = (value) => typeof value === "string" ? JSON.parse(value) : value;
@@ -63,12 +65,15 @@ export async function enqueue({ event, connection }) {
 
 // All list/count/read mutations use the same ownership and current-authorisation predicate.
 function visibility(scope) {
-  const where = ["n.recipient_id = ?", "n.tenant_id = e.tenant_id", "e.audience = ?"];
+  const where = ["n.recipient_id = ?", "n.tenant_id = e.tenant_id", "e.audience = ?", "n.suppressed_at IS NULL"];
   const args = [id(scope.recipientId), scope.audience];
   if (scope.audience !== "PLATFORM") { where.push("n.tenant_id = ?"); args.push(id(scope.tenantId)); }
   if (scope.audience === "CUSTOMER") {
-    where.push(`e.store_id = ? AND EXISTS (SELECT 1 FROM customer_orders o WHERE o.id = e.order_id
-      AND o.tenant_id = n.tenant_id AND o.store_id = e.store_id AND o.customer_id = n.recipient_id)`);
+    where.push(`e.store_id = ? AND ((e.entity_type='PRODUCT_QUESTION' AND EXISTS
+      (SELECT 1 FROM product_questions q JOIN product_question_answers a ON a.question_id=q.id AND a.tenant_id=q.tenant_id
+       WHERE q.id=e.entity_id AND q.tenant_id=n.tenant_id AND q.store_id=e.store_id AND q.customer_id=n.recipient_id
+         AND q.status='APPROVED' AND ${visibleAnswer})) OR (e.entity_type<>'PRODUCT_QUESTION' AND EXISTS (SELECT 1 FROM customer_orders o WHERE o.id = e.order_id
+      AND o.tenant_id = n.tenant_id AND o.store_id = e.store_id AND o.customer_id = n.recipient_id)))`);
     args.push(id(scope.storeId));
   } else if (!scope.unrestricted) {
     const permissions = scope.permissions || [];
@@ -76,14 +81,19 @@ function visibility(scope) {
     args.push(...permissions);
   }
   if (scope.audience === "VENDOR") {
-    where.push(`e.merchant_id = ? AND EXISTS (SELECT 1 FROM seller_orders so
+    where.push(`e.merchant_id = ? AND ((e.entity_type='PRODUCT_QUESTION' AND EXISTS
+      (SELECT 1 FROM product_questions q WHERE q.id=e.entity_id AND q.tenant_id=n.tenant_id AND q.store_id=e.store_id AND q.status='APPROVED' AND ${vendorEligibility('e.merchant_id')})) OR (e.entity_type<>'PRODUCT_QUESTION' AND EXISTS (SELECT 1 FROM seller_orders so
       JOIN merchants m ON m.id = so.merchant_id AND m.tenant_id = so.tenant_id
       JOIN vendor_profiles vp ON vp.merchant_id = m.id AND vp.tenant_id = m.tenant_id
       WHERE so.id = e.entity_id AND so.tenant_id = n.tenant_id AND so.merchant_id = e.merchant_id
-        AND m.status = 'ACTIVE' AND m.deleted_at IS NULL AND vp.onboarding_status = 'APPROVED')`);
+        AND m.status = 'ACTIVE' AND m.deleted_at IS NULL AND vp.onboarding_status = 'APPROVED')))`);
     args.push(id(scope.merchantId));
   }
   // Never expose a notification whose source was removed or moved to another scope.
+  where.push(`(e.entity_type<>'PRODUCT_QUESTION' OR EXISTS (SELECT 1 FROM product_questions q
+    JOIN products p ON p.id=q.product_id AND p.tenant_id=q.tenant_id AND p.deleted_at IS NULL
+    JOIN stores s ON s.id=q.store_id AND s.tenant_id=q.tenant_id AND s.deleted_at IS NULL
+    WHERE q.id=e.entity_id AND q.tenant_id=e.tenant_id AND q.store_id=e.store_id AND q.status<>'WITHDRAWN'))`);
   where.push(`(e.entity_type NOT IN ('ORDER','SELLER_ORDER','RETURN','WARRANTY_CLAIM') OR EXISTS
     (SELECT 1 FROM customer_orders source WHERE source.id = e.order_id AND source.tenant_id = e.tenant_id AND source.store_id = e.store_id))`);
   where.push(`(e.entity_type <> 'RETURN' OR EXISTS (SELECT 1 FROM return_requests rr
@@ -180,8 +190,21 @@ export async function processNext({ connection, eventId = null }) {
     if (!Array.isArray(recipients)) throw new Error("INVALID_RECIPIENTS");
     const batch = recipients.slice(event.recipient_offset, event.recipient_offset + 100);
     for (const recipientId of batch) {
-      await connection.execute(`INSERT INTO inbox_recipients (id, tenant_id, event_id, recipient_id)
-        VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`, [id(createId()), event.tenant_id, event.id, id(recipientId)]);
+      if (isOptionalCategory(event.audience, event.category)) {
+        // Preferences are snapshotted once per recipient. A replay must not
+        // reveal an opted-out update or hide an older, already-visible update.
+        await connection.execute(`INSERT INTO inbox_recipients (id, tenant_id, event_id, recipient_id, suppressed_at)
+          VALUES (?, ?, ?, ?, IF(EXISTS (SELECT 1 FROM inbox_preferences p
+            WHERE p.tenant_id = ? AND p.audience = ? AND p.recipient_id = ? AND p.store_scope = ?
+              AND JSON_CONTAINS(p.disabled_categories, JSON_QUOTE(?)) = 1), UTC_TIMESTAMP(6), NULL))
+          ON DUPLICATE KEY UPDATE id = id`, [id(createId()), event.tenant_id, event.id, id(recipientId),
+          event.tenant_id, event.audience, id(recipientId), event.audience === "CUSTOMER" ? event.store_id : Buffer.alloc(16), event.category]);
+      } else {
+        // Essential, unsupported-audience and future unknown categories always
+        // remain enabled, even if preferences are tampered with externally.
+        await connection.execute(`INSERT INTO inbox_recipients (id, tenant_id, event_id, recipient_id)
+          VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`, [id(createId()), event.tenant_id, event.id, id(recipientId)]);
+      }
     }
     const offset = event.recipient_offset + batch.length, complete = offset >= recipients.length;
     await connection.execute(`UPDATE inbox_events SET recipient_offset = ?, status = ?, attempt_count = 0,

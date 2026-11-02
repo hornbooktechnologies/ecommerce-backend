@@ -35,3 +35,12 @@ package-lock.json
 !src/database/migrations/033_payment_recovery.sql
 !src/database/migrations/034_notification_inbox.sql
 !scripts/verify-storefront-payments.js
+!src/database/migrations/038_bulk_import_recovery.sql
+!src/database/migrations/039_newsletter_subscribers.sql
+!src/database/migrations/040_store_content_pages.sql
+!src/database/migrations/041_inbox_preferences.sql
+!src/database/migrations/042_platform_dashboard_permission.sql
+!src/database/migrations/043_product_size_guides.sql
+!src/database/migrations/044_product_specifications.sql
+!src/database/migrations/045_product_questions.sql
+!src/database/migrations/046_review_photos.sql

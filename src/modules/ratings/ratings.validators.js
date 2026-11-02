@@ -8,6 +8,7 @@ export const listRatingsSchema = Joi.object({
   status: Joi.string().uppercase().valid("ALL", "PENDING", "PUBLISHED", "HIDDEN", "FLAGGED").default("ALL"),
   rating: Joi.number().integer().min(0).max(5).default(0),
   productId: uuid.allow(null, "").default(null),
+  hasPendingPhotos: Joi.boolean().default(false),
   page: Joi.number().integer().min(1).default(1),
   pageSize: Joi.number().integer().min(1).max(100).default(10)
 }).custom((value) => ({ ...value, productId: value.productId || null })).required();

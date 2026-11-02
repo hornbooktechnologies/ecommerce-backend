@@ -1,0 +1,77 @@
+NEWSLETTER SUBSCRIPTIONS - 30 October 2026
+
+Scope
+Real storefront newsletter requests, double opt-in, email-link unsubscribe and
+tenant-admin subscriber management. This is not a marketing campaign sender.
+No newsletter email is sent automatically to existing customers or purchasers.
+No historical customers are imported into the list. No new dependency/worker.
+
+Setup
+1. Apply migration 039_newsletter_subscribers.sql using npm run db:migrate.
+2. Restart the API (if not watching), admin and storefront as needed.
+3. Refresh the admin session/sign out and in for new capabilities/navigation.
+4. Existing SMTP_* settings and CUSTOMER_STOREFRONT_URLS mapping are reused.
+   Keep all credentials in the backend .env. Example mapping shape only:
+   {"HORNBOOK_RETAIL/MAIN":"http://localhost:3001"}
+   Use the actual storefront origin for this environment. Production requires
+   HTTPS. No SMTP verification or real email send was performed during setup.
+
+Customer flow
+Homepage newsletter > enter email > explicitly tick consent > Subscribe.
+One tenant/store/email record is saved as PENDING, not ACTIVE. A plain-text
+confirmation email contains a 30-minute confirmation link and unsubscribe link.
+Open the link, then explicitly Confirm subscription. GET/page loads do not
+consume tokens, so ordinary email link scanners do not subscribe/unsubscribe.
+Links carry random 256-bit secrets in URL fragments; only hashes are stored.
+Tokens are not returned to admin, logged as URLs, or stored in browser storage.
+Confirmation is repeat-safe during its validity window. Unsubscribe is repeat-
+safe and also revokes pending confirmation. No account login is required.
+Unsubscribe links/API accept inactive stores/tenants too. The newsletter email-
+link documents intentionally bypass the catalog-dependent storefront layout;
+they do not load account/cart/catalog APIs. A later opt-in requires
+another explicit request and a new email confirmation; old links cannot undo it.
+Use the latest email after a resend. The request response does not disclose
+whether an address was already subscribed. Failed SMTP is not a success message.
+
+Admin flow
+Storefront & marketing > Newsletter. Search email; filter store/status; paginate
+10 rows by default. Times are IST. Pending and failed-confirmation delivery are
+distinct from Subscribed. List has no token/hash/password data.
+Unsubscribe requires a reason, confirmation and current revision. A concurrent
+new consent changes the revision and rejects stale admin actions. Refresh and
+review before retrying. Actions are audited without copying email/token values.
+There is no add/import/force-activate or bulk-resubscribe button.
+
+Permissions
+newsletter.read lists recipients; newsletter.manage plus newsletter.read allows
+unsubscribe. Migration grants both to tenant_owner and tenant_administrator only.
+Delegate using Roles if required. Vendor/platform roles gain no tenant list access.
+Navigation is supplied by the API and filtered by current capabilities.
+
+Safety and boundaries
+All queries are tenant scoped; public operations additionally scope by store.
+Unique tenant/store/email key prevents duplicate recipients. Store and subscriber
+locks serialize requests/confirmation. Status changes and audit are transactional.
+SMTP is outside the database transaction; a send failure revokes only that exact
+pending confirmation token. An ambiguous SMTP result can require a new request;
+automatic mail retries and guaranteed email delivery are not provided.
+Rate limits reuse existing database-backed customer_auth_limits, with separate
+newsletter keys: 3 requests/email/store/15min and 300 operations/API-IP/store/15min.
+Behind the storefront proxy, API-IP is the proxy address, not a verified end-user
+IP. Production edge/client-IP abuse controls must be configured after hosting.
+The browser proxy enforces same origin, JSON, a 4KB streamed body and an action
+allowlist. Tenant/store configuration is server-owned. Cookies/auth tokens and
+untrusted forwarding headers are not relayed. Responses are no-store.
+Subscribers are private personal data, not a public directory. This release does
+not implement retention/deletion workflows or legal-policy page authoring.
+Future campaign sends must re-check ACTIVE status/consent at send time and include
+a valid unsubscribe mechanism; merely exporting a historical list is not enough.
+
+Verification
+Source, JavaScript/JSX/TSX/CSS syntax, references and diffs reviewed only.
+Regression cases supplied but NOT run. Lint/tests/build and browser/runtime/SMTP
+delivery verification are skipped as requested. No real subscriptions or emails
+were created to validate this feature. Later isolated checks should cover real
+mail delivery, confirmation expiry, resends/concurrent requests, admin revision
+conflicts, tenant/store isolation, API permissions, proxy origin/size handling,
+hash changes/unmounts, keyboard navigation and responsive light/dark layouts.

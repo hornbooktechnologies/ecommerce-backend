@@ -1,6 +1,11 @@
 BULK IMPORT INBOX NOTIFICATIONS
 Implemented: 29 October 2026
 
+Recovery update: 30 October 2026
+See BULK-IMPORT-RECOVERY.txt and migration 038. New-protocol row changes and
+results are now atomic, and interrupted jobs can resume unfinished rows after
+the recovery window. Older interrupted jobs still require manual reconciliation.
+
 Scope
 - Product, pricing and inventory CSV imports only.
 - Persisted validation errors notify the uploader.
@@ -34,12 +39,14 @@ Known boundaries
 - Parser, missing-header, oversized-file or request errors before a persisted job
   remain immediate form errors; they do not create inbox events.
 - Infrastructure failures or an interrupted COMMITTING job do not generate a
-  fabricated completion alert. Automated interrupted-job recovery is not included.
-- If a row write succeeds but its result-recording fails, the job may report that
-  row as failed. Review actual records before retrying; this pre-existing import
-  boundary is not changed by notification wiring.
+  fabricated completion alert. Recovery is operator-initiated, not automatic.
+- With migration 038/new importer code, business changes and row results commit
+  together. A lost COMMIT acknowledgement leaves the stored row authoritative;
+  recovery skips it if already committed. Pre-upgrade interrupted jobs cannot
+  safely make this assumption and remain blocked for manual reconciliation.
 - If finalization/event persistence fails, earlier successful rows remain applied;
-  the job stays COMMITTING and requires investigation, not a blind file re-upload.
+  the job stays COMMITTING. Resume its original job once eligible; do not blindly
+  re-upload the file. Completion notification is generated only on finalization.
 - An unavailable inbox worker delays delivery; committed events remain queued.
 - No new schema migration or dependency is required (existing migrations 020/034).
 - No import jobs, customer records or stock quantities were changed during this work.

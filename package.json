@@ -21,6 +21,7 @@
     "notifications:stock": "node src/workers/stock-alerts.js",
     "notifications:stock:once": "node src/workers/stock-alerts.js --once",
     "notifications:stock:status": "node src/workers/stock-alerts.js --status",
+    "reviews:photos:cleanup": "node src/workers/review-photo-cleanup.js",
     "lint": "eslint .",
     "test": "node --test",
     "test:watch": "node --test --watch",
@@ -73,6 +74,7 @@
     "pdfkit": "^0.20.2",
     "pino": "^10.1.0",
     "pino-http": "^11.0.0",
+    "sharp": "0.35.5",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

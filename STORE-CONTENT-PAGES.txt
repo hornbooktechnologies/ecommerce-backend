@@ -1,0 +1,88 @@
+STORE INFORMATION AND POLICY PAGES - 2 November 2026
+
+Scope
+Six fixed pages per store: About, Contact, Shipping, Returns/Cancellation,
+Privacy and Terms. Plain-text title, introduction and body. No generated legal
+text, default policy promises, rich HTML, uploads or new dependencies.
+Nothing is published automatically. Existing orders, return eligibility,
+shipping rates, tax/payment rules and customer consents are not changed.
+
+Setup
+Apply migration 040_store_content_pages.sql via npm run db:migrate. Restart the
+API if not watching. Refresh the admin session/sign in again for new navigation.
+Open Storefront & marketing > Store pages. This feature uses existing MariaDB
+10.4 transactions/DAOs and Next.js/Express. No Docker, Redis or external hosting.
+
+Admin flow
+1. Search/select a store; select one of the six pages. Store search returns up to
+   50 matches; refine by name/code to find any store in the tenant.
+2. Add approved content. Blank lines create paragraphs. HTML remains visible
+   text, never executable markup. Empty drafts can be saved but not published.
+3. Save draft. A previous published version remains live while editing.
+4. Preview the saved draft. Compare it with Published version if available.
+5. Tick the explicit review/approval confirmation and Publish approved draft.
+6. Refresh the storefront: its shared footer includes the published page.
+7. To withdraw, tick the separate removal confirmation and Withdraw published
+   page. The live page/link disappears; the saved draft remains for later edits.
+
+Publication is not a legal-compliance check. Supply client-approved text, real
+contact details and accurate operational terms. Contact is an information page,
+not an enquiry form or automatic email sender. Editorial changes do not modify
+the operational configuration described by those policies.
+
+Draft safety
+Unsaved edits require confirmation when switching stores/pages or reloading the
+saved version. Browser unload protection is enabled while dirty. In-app sidebar
+navigation is not intercepted; save before leaving this workspace.
+Text is not copied into local/session storage. API failures retain the editor
+text. Conflicts require copying unsaved work and explicitly reloading; there is
+no silent merge/overwrite. Access-token refresh does not discard an active draft.
+Signing out/changing user/tenant clears the workspace to protect private drafts.
+
+Access and API
+store.content.read: find stores, read drafts and preview privately.
+store.content.manage plus read: save drafts.
+store.content.publish plus read: publish/withdraw.
+Owner/administrator roles receive these grants. Delegate other roles explicitly.
+Vendor and platform roles are not automatically granted access to tenant pages.
+Menu items and capabilities continue to come from the API response.
+
+GET /api/admin/v1/content-pages/stores?search=...
+GET/PUT /api/admin/v1/stores/:storeId/content-pages/:pageKey
+POST same path + /preview, /publish or /withdraw
+GET /api/storefront/v1/:tenantCode/stores/:storeCode/pages
+GET same path + /:slug
+
+Public slugs: about, contact, shipping, returns, privacy, terms.
+Storefront routes: /pages/:slug. Only published snapshots are returned publicly;
+draft JSON, author IDs, revisions and audit data are never selected by public
+queries. Unpublished/withdrawn pages return 404. Active store/tenant is required.
+The public index is limited to six known pages. Read responses are no-store;
+refresh already-open storefront tabs after publication/withdrawal.
+
+Rendering
+Server-rendered page bodies and metadata, published-page sitemap entries, and
+one shared responsive footer replace the homepage-only footer. Unknown/draft
+pages are not linked. Footer-index failure shows an unavailable message, not
+fabricated links. Paragraph text is React-escaped, never dangerouslySetInnerHTML.
+Footer loading is isolated by Suspense so its API request does not block the
+main storefront content. Sitemap generation fails rather than pretending pages
+have disappeared when the information API is temporarily unavailable.
+Published content remains public until an authorized explicit withdrawal.
+
+Consistency
+Every query scopes tenant/store. Store locks serialize first save and all page
+mutations; a unique tenant/store/page key prevents duplicate pages. A revision
+increments on save/publish/withdraw; every mutation rejects a stale revision.
+Mutation and audit commit together. Audit records IDs/revision/action, not policy
+body/contact details. Inactive-store drafts can be prepared in advance; public
+routes still require an active store and active tenant. No content is seeded.
+
+Verification
+Source/JS/JSX/TSX/CSS syntax, references and whitespace reviewed only. Migration
+application is not runtime verification. Regression cases supplied but NOT run.
+Lint/tests/build/browser workflows remain skipped as requested. No client policy
+was created or published for validation. Later isolated verification should cover
+CAS races, audit rollback, permissions, tenant/store isolation, draft leakage,
+publication/withdrawal and footer refresh, malformed requests, literal HTML text,
+unsaved switches/session changes, keyboard flow and responsive light/dark views.

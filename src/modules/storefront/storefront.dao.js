@@ -1,5 +1,6 @@
 import { getPrimaryPool } from "../../database/pool-factory.js";
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
+import {publicPhotos} from '../review-photos/review-photos.dao.js';
 
 // Every public query starts from an active tenant/store and eligible, dated offers.
 export async function resolveStore({ tenantCode, storeCode, connection = getPrimaryPool() }) {
@@ -29,7 +30,8 @@ const stock = `COALESCE((SELECT SUM(GREATEST(0, LEAST(
     AND w.status = 'ACTIVE' AND w.deleted_at IS NULL
   WHERE ib.tenant_id = so.tenant_id AND ib.offer_id = so.id), 0)`;
 
-const offersCte = `WITH RECURSIVE eligible AS (
+// Only internal, parameterised predicates may be passed here, never raw user SQL.
+const offersCte = (offerPredicate = "1 = 1") => `WITH RECURSIVE eligible AS (
   SELECT so.id AS offer_id, so.tenant_id, so.merchant_id, pv.id AS variant_id, p.id AS product_id,
     p.product_kind, pv.sku, pv.name AS variant_name, COALESCE(so.minimum_order_quantity, pv.minimum_order_quantity) AS minimum_order_quantity,
     COALESCE(so.maximum_order_quantity, pv.maximum_order_quantity) AS maximum_order_quantity, pv.quantity_step, pv.sold_by_weight, pv.warranty_months,
@@ -103,16 +105,22 @@ const offersCte = `WITH RECURSIVE eligible AS (
 ), ranked AS (
   SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e.product_id
     ORDER BY (e.available_quantity >= e.minimum_order_quantity) DESC, e.sale_price, e.offer_id) AS position
-  FROM sellable e
+  FROM sellable e WHERE ${offerPredicate}
 ), catalog AS (
   SELECT p.id, p.name, p.slug, p.product_code, p.short_description, p.created_at,
     p.is_returnable, p.return_window_days, pt.vertical, b.id AS brand_id, b.name AS brand_name,
     c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
     e.offer_id, e.variant_id, e.sku, e.sale_price, e.list_price, e.available_quantity,
+    (SELECT ao.display_label FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.code = 'COLOR'
+      JOIN attribute_options ao ON ao.id = v.option_id WHERE v.variant_id = e.variant_id LIMIT 1) AS matched_color,
+    (SELECT ao.display_label FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.code = 'SIZE'
+      JOIN attribute_options ao ON ao.id = v.option_id WHERE v.variant_id = e.variant_id LIMIT 1) AS matched_size,
     e.includes_tax, e.seller_name, e.minimum_order_quantity, e.quantity_step,
     (SELECT ma.file_key FROM product_media pm JOIN media_assets ma ON ma.id = pm.media_asset_id
       AND ma.tenant_id = p.tenant_id AND ma.deleted_at IS NULL WHERE pm.product_id = p.id
-      ORDER BY pm.variant_id IS NOT NULL, pm.color_option_id IS NOT NULL,
+      AND (pm.variant_id IS NULL OR pm.variant_id = e.variant_id)
+      AND (pm.color_option_id IS NULL OR EXISTS (SELECT 1 FROM variant_attribute_values v WHERE v.variant_id = e.variant_id AND v.option_id = pm.color_option_id))
+      ORDER BY pm.variant_id IS NOT NULL DESC, pm.color_option_id IS NOT NULL DESC,
         (pm.media_role = 'PRIMARY') DESC, pm.sort_order, pm.id LIMIT 1) AS image_url,
     (SELECT AVG(pr.rating) FROM product_ratings pr WHERE pr.tenant_id = p.tenant_id
       AND pr.product_id = p.id AND pr.status = 'PUBLISHED' AND pr.deleted_at IS NULL) AS rating,
@@ -140,6 +148,7 @@ export function mapProduct(row, currency) {
     rating: row.rating === null ? "0" : Number(row.rating).toFixed(1), reviews: Number(row.review_count),
     availableQuantity: Number(row.available_quantity), inStock: Number(row.available_quantity) >= Number(row.minimum_order_quantity),
     offerId: bufferToUuid(row.offer_id), variantId: bufferToUuid(row.variant_id), sku: row.sku,
+    matchedColor: row.matched_color || "", matchedSize: row.matched_size || "",
     minimumOrderQuantity: Number(row.minimum_order_quantity), quantityStep: Number(row.quantity_step),
     description: row.short_description || "", sellerName: row.seller_name,
     includesTax: Boolean(row.includes_tax), isReturnable: Boolean(row.is_returnable),
@@ -148,25 +157,43 @@ export function mapProduct(row, currency) {
 
 export async function listProducts({ scope, filters, connection = getPrimaryPool() }) {
   const where = ["1 = 1"]; const values = [];
-  if (filters.search) { where.push("(name LIKE ? ESCAPE '\\\\' OR product_code LIKE ? ESCAPE '\\\\' OR brand_name LIKE ? ESCAPE '\\\\' OR category_name LIKE ? ESCAPE '\\\\' OR sku LIKE ? ESCAPE '\\\\')");
-    const term = `%${filters.search.replace(/[\\%_]/g, "\\$&")}%`; values.push(term, term, term, term, term); }
+  const offerWhere = ["1 = 1"], offerValues = [];
+  if (filters.search) {
+    const term = `%${filters.search.replace(/[\\%_]/g, "\\$&")}%`;
+    offerWhere.push(`(e.sku LIKE ? ESCAPE '\\\\' OR EXISTS (SELECT 1 FROM products sp
+      LEFT JOIN brands sb ON sb.id = sp.brand_id AND sb.status = 'ACTIVE' AND sb.deleted_at IS NULL
+      WHERE sp.id = e.product_id AND (sp.name LIKE ? ESCAPE '\\\\' OR sp.product_code LIKE ? ESCAPE '\\\\' OR sb.name LIKE ? ESCAPE '\\\\'
+      OR EXISTS (SELECT 1 FROM product_categories pc JOIN categories sc ON sc.id = pc.category_id AND sc.status = 'ACTIVE' AND sc.deleted_at IS NULL
+        WHERE pc.product_id = sp.id AND sc.name LIKE ? ESCAPE '\\\\'))))`);
+    offerValues.push(term, term, term, term, term);
+  }
   if (filters.category) { where.push("category_slug = ?"); values.push(filters.category); }
-  if (filters.brand) { where.push("brand_id = ?"); values.push(uuidToBuffer(filters.brand)); }
-  if (filters.minPrice !== undefined) { where.push("sale_price >= ?"); values.push(filters.minPrice); }
-  if (filters.maxPrice !== undefined) { where.push("sale_price <= ?"); values.push(filters.maxPrice); }
+  const brands = [...new Set([...(filters.brands || []), ...(filters.brand ? [filters.brand] : [])])];
+  if (brands.length) { where.push(`brand_id IN (${brands.map(() => '?').join(',')})`); values.push(...brands.map(uuidToBuffer)); }
+  for (const [key, code] of [["colors", "COLOR"], ["sizes", "SIZE"]]) {
+    if (!filters[key]?.length) continue;
+    offerWhere.push(`EXISTS (SELECT 1 FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id
+      AND ad.tenant_id = e.tenant_id AND ad.code = ? AND ad.deleted_at IS NULL
+      JOIN attribute_options ao ON ao.id = v.option_id AND ao.tenant_id = e.tenant_id AND ao.status = 'ACTIVE'
+      WHERE v.variant_id = e.variant_id AND ao.id IN (${filters[key].map(() => '?').join(',')}))`);
+    offerValues.push(code, ...filters[key].map(uuidToBuffer));
+  }
+  if (filters.minPrice !== undefined) { offerWhere.push("e.sale_price >= ?"); offerValues.push(filters.minPrice); }
+  if (filters.maxPrice !== undefined) { offerWhere.push("e.sale_price <= ?"); offerValues.push(filters.maxPrice); }
   if (filters.minRating) { where.push("rating >= ?"); values.push(filters.minRating); }
-  if (filters.inStock) where.push("available_quantity >= minimum_order_quantity");
-  if (filters.minDiscount) { where.push("(list_price - sale_price) / NULLIF(list_price, 0) * 100 >= ?"); values.push(filters.minDiscount); }
+  if (filters.inStock) offerWhere.push("LEAST(e.available_quantity, COALESCE(e.maximum_order_quantity, e.available_quantity)) >= e.minimum_order_quantity");
+  if (filters.minDiscount) { offerWhere.push("(e.list_price - e.sale_price) / NULLIF(e.list_price, 0) * 100 >= ?"); offerValues.push(filters.minDiscount); }
   const orders = { featured: "product_code, id", newest: "created_at DESC, id DESC",
     price_asc: "sale_price, id", price_desc: "sale_price DESC, id", rating: "rating DESC, review_count DESC, id",
     discount: "(list_price - sale_price) / NULLIF(list_price, 0) DESC, id", review_count: "review_count DESC, rating DESC, id" };
-  const clause = where.join(" AND "); const params = [...scopeParams(scope), ...values];
+  const clause = where.join(" AND "); const params = [...scopeParams(scope), ...offerValues, ...values];
+  const cte = offersCte(offerWhere.join(" AND "));
   // MariaDB 10.4 can fail when reusing prepared recursive CTEs with scalar aggregates.
   // mysql2 query placeholders still escape/bind all user values; only allowlisted sort SQL is interpolated.
   const [[rows], [[count]]] = await Promise.all([
-    connection.query(`${offersCte} SELECT * FROM catalog WHERE ${clause} ORDER BY ${orders[filters.sort] || orders.featured} LIMIT ? OFFSET ?`,
+    connection.query(`${cte} SELECT * FROM catalog WHERE ${clause} ORDER BY ${orders[filters.sort] || orders.featured} LIMIT ? OFFSET ?`,
       [...params, filters.pageSize, (filters.page - 1) * filters.pageSize]),
-    connection.query(`${offersCte} SELECT COUNT(*) AS total FROM catalog WHERE ${clause}`, params)
+    connection.query(`${cte} SELECT COUNT(*) AS total FROM catalog WHERE ${clause}`, params)
   ]);
   return { items: rows.map((row) => mapProduct(row, scope.currency)), total: Number(count.total),
     page: filters.page, pageSize: filters.pageSize, totalPages: Math.max(1, Math.ceil(Number(count.total) / filters.pageSize)) };
@@ -174,10 +201,10 @@ export async function listProducts({ scope, filters, connection = getPrimaryPool
 
 export async function listFacets({ scope, connection = getPrimaryPool() }) {
   const [[categories], [brands]] = await Promise.all([
-    connection.query(`${offersCte} SELECT category_id, category_name, category_slug,
+    connection.query(`${offersCte()} SELECT category_id, category_name, category_slug,
       MIN(image_url) AS image_url, COUNT(*) AS product_count FROM catalog
       GROUP BY category_id, category_name, category_slug ORDER BY category_name`, scopeParams(scope)),
-    connection.query(`${offersCte} SELECT brand_id, brand_name, COUNT(*) AS product_count FROM catalog
+    connection.query(`${offersCte()} SELECT brand_id, brand_name, COUNT(*) AS product_count FROM catalog
       WHERE brand_id IS NOT NULL GROUP BY brand_id, brand_name ORDER BY brand_name`, scopeParams(scope))
   ]);
   return { categories: categories.map((row) => ({ id: bufferToUuid(row.category_id), name: row.category_name,
@@ -185,32 +212,62 @@ export async function listFacets({ scope, connection = getPrimaryPool() }) {
   brands: brands.map((row) => ({ id: bufferToUuid(row.brand_id), name: row.brand_name, count: Number(row.product_count) })) };
 }
 
+// Facets describe the search/category collection BEFORE option/price selections.
+// Counts are distinct public products, not seller offers or unused/private masters.
+export async function listDiscoveryFacets({ scope, filters, connection = getPrimaryPool() }) {
+  const where = ["1 = 1"], values = [];
+  if (filters.category) { where.push("c.category_slug = ?"); values.push(filters.category); }
+  if (filters.search) {
+    where.push(`(c.name LIKE ? ESCAPE '\\\\' OR c.product_code LIKE ? ESCAPE '\\\\' OR c.brand_name LIKE ? ESCAPE '\\\\'
+      OR c.category_name LIKE ? ESCAPE '\\\\' OR EXISTS (SELECT 1 FROM sellable se WHERE se.product_id = c.id AND se.sku LIKE ? ESCAPE '\\\\'))`);
+    const term = `%${filters.search.replace(/[\\%_]/g, "\\$&")}%`; values.push(term, term, term, term, term);
+  }
+  const params = [...scopeParams(scope), ...values], clause = where.join(' AND ');
+  const [[brands], [options]] = await Promise.all([
+    connection.query(`${offersCte()} SELECT c.brand_id,c.brand_name,COUNT(DISTINCT c.id) AS product_count FROM catalog c
+      WHERE ${clause} AND c.brand_id IS NOT NULL GROUP BY c.brand_id,c.brand_name ORDER BY c.brand_name`, params),
+    connection.query(`${offersCte()} SELECT ad.code,ao.id,ao.display_label,ao.swatch_value,ao.sort_order,COUNT(DISTINCT c.id) AS product_count
+      FROM catalog c JOIN sellable e ON e.product_id = c.id
+      JOIN variant_attribute_values v ON v.variant_id = e.variant_id
+      JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.tenant_id = e.tenant_id AND ad.code IN ('COLOR','SIZE') AND ad.deleted_at IS NULL
+      JOIN attribute_options ao ON ao.id = v.option_id AND ao.tenant_id = e.tenant_id AND ao.status = 'ACTIVE'
+      WHERE ${clause} GROUP BY ad.code,ao.id,ao.display_label,ao.swatch_value,ao.sort_order ORDER BY ad.code,ao.sort_order,ao.display_label`, params)
+  ]);
+  const mapOptions = (code) => options.filter((row) => row.code === code).map((row) => ({id:bufferToUuid(row.id),name:row.display_label,swatchValue:row.swatch_value || null,count:Number(row.product_count)}));
+  return { brands:brands.map((row) => ({id:bufferToUuid(row.brand_id),name:row.brand_name,count:Number(row.product_count)})),
+    colors:mapOptions('COLOR'),sizes:mapOptions('SIZE'),countScope:'SEARCH_CATEGORY' };
+}
+
 export async function findProduct({ scope, slug, connection = getPrimaryPool() }) {
-  const [rows] = await connection.query(`${offersCte} SELECT * FROM catalog WHERE slug = ? LIMIT 1`, [...scopeParams(scope), slug]);
+  const [rows] = await connection.query(`${offersCte()} SELECT * FROM catalog WHERE slug = ? LIMIT 1`, [...scopeParams(scope), slug]);
   return rows[0] ? mapProduct(rows[0], scope.currency) : null;
 }
 
 // Reuse the public catalogue guards: never expose hidden/foreign products through a wishlist.
 export async function wishlistProducts({ scope, productIds, connection = getPrimaryPool() }) {
   if (!productIds.length) return [];
-  const [rows] = await connection.query(`${offersCte} SELECT * FROM catalog WHERE id IN (${productIds.map(() => "?").join(",")})`,
+  const [rows] = await connection.query(`${offersCte()} SELECT * FROM catalog WHERE id IN (${productIds.map(() => "?").join(",")})`,
     [...scopeParams(scope), ...productIds.map(uuidToBuffer)]);
   return rows.map((row) => mapProduct(row, scope.currency));
 }
 
 export async function listVariants({ scope, productId, connection = getPrimaryPool() }) {
-  const [rows] = await connection.query(`${offersCte} SELECT e.*,
+  const [rows] = await connection.query(`${offersCte()} SELECT e.*,
     (SELECT ao.id FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.code = 'COLOR'
       JOIN attribute_options ao ON ao.id = v.option_id WHERE v.variant_id = e.variant_id LIMIT 1) AS color_id,
     (SELECT ao.display_label FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.code = 'COLOR'
       JOIN attribute_options ao ON ao.id = v.option_id WHERE v.variant_id = e.variant_id LIMIT 1) AS color_name,
+    (SELECT ao.swatch_value FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.code = 'COLOR'
+      JOIN attribute_options ao ON ao.id = v.option_id WHERE v.variant_id = e.variant_id LIMIT 1) AS color_swatch,
     (SELECT ao.display_label FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.code = 'SIZE'
       JOIN attribute_options ao ON ao.id = v.option_id WHERE v.variant_id = e.variant_id LIMIT 1) AS size_name
     FROM sellable e WHERE e.product_id = ? ORDER BY e.sale_price, e.offer_id`, [...scopeParams(scope), uuidToBuffer(productId)]);
   return rows.map((row) => ({ id: bufferToUuid(row.variant_id), offerId: bufferToUuid(row.offer_id),
     name: row.variant_name || "Standard", sku: row.sku, colorId: bufferToUuid(row.color_id),
-    color: row.color_name || "", size: row.size_name || "", price: Number(row.sale_price), mrp: Number(row.list_price),
-    sellerName: row.seller_name, availableQuantity: Number(row.available_quantity),
+    color: row.color_name || "", colorSwatch: row.color_swatch || null,
+    size: row.size_name || "", price: Number(row.sale_price), mrp: Number(row.list_price),
+    sellerId: bufferToUuid(row.merchant_id), sellerName: row.seller_name, includesTax: Boolean(row.includes_tax),
+    availableQuantity: Number(row.available_quantity),
     minimumOrderQuantity: Number(row.minimum_order_quantity), maximumOrderQuantity: row.maximum_order_quantity === null ? null : Number(row.maximum_order_quantity),
     quantityStep: Number(row.quantity_step), soldByWeight: Boolean(row.sold_by_weight), uom: row.uom,
     warrantyMonths: Number(row.warranty_months || 0), warrantyType: row.warranty_type }));
@@ -219,7 +276,7 @@ export async function listVariants({ scope, productId, connection = getPrimaryPo
 // Exact seller/variant offers, not the representative offer used by catalog cards.
 export async function cartOffers({ scope, offerIds, connection = getPrimaryPool() }) {
   if (!offerIds.length) return [];
-  const [rows] = await connection.query(`${offersCte} SELECT c.*, e.*,
+  const [rows] = await connection.query(`${offersCte()} SELECT c.*, e.*,
     (SELECT ma.file_key FROM product_media pm JOIN media_assets ma ON ma.id = pm.media_asset_id
       AND ma.tenant_id = e.tenant_id AND ma.deleted_at IS NULL
       WHERE pm.product_id = e.product_id AND (pm.variant_id IS NULL OR pm.variant_id = e.variant_id)
@@ -240,7 +297,9 @@ export async function listReviews({ scope, productId, connection = getPrimaryPoo
     customer_name_snapshot, submitted_at FROM product_ratings
     WHERE tenant_id = ? AND product_id = ? AND status = 'PUBLISHED' AND deleted_at IS NULL
     ORDER BY helpful_count DESC, submitted_at DESC, id LIMIT 20`, [uuidToBuffer(scope.tenantId), uuidToBuffer(productId)]);
+  const photos=await publicPhotos({scope,reviewIds:rows.map(row=>bufferToUuid(row.id)),connection});
   return rows.map((row) => ({ id: bufferToUuid(row.id), rating: Number(row.rating), title: row.title || "",
     body: row.review_text || "", name: row.customer_name_snapshot?.split(/\s+/)[0] || "Customer",
-    verifiedPurchase: Boolean(row.verified_purchase), date: row.submitted_at }));
+    verifiedPurchase: Boolean(row.verified_purchase), date: row.submitted_at,
+    photos:photos.filter(photo=>photo.reviewId===bufferToUuid(row.id)).map(photo=>({id:photo.id,alt:photo.alt,width:photo.width,height:photo.height,url:`/api/review-photos/${photo.id}`})) }));
 }

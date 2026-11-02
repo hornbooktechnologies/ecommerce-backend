@@ -1,4 +1,4 @@
-import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
+import { bufferToUuid, createId, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
 import { enqueueBulkImportInbox } from "../notifications/bulk-import-inbox.events.js";
 
@@ -12,15 +12,22 @@ function mapJob(row) {
     status: row.status, totalRows: Number(row.total_rows), validRows: Number(row.valid_rows),
     invalidRows: Number(row.invalid_rows), committedRows: Number(row.committed_rows),
     failedRows: Number(row.failed_rows), createdByName: row.created_by_name,
-    createdAt: row.created_at, committedAt: row.committed_at
+    createdAt: row.created_at, committedAt: row.committed_at,
+    recoveryVersion: Number(row.recovery_version || 0),
+    lastProgressAt: row.last_progress_at || null,
+    leaseActive: Boolean(row.lease_active),
+    canResume: row.status === "COMMITTING" && Number(row.recovery_version) === 1 && !row.lease_active,
+    needsManualReview: row.status === "COMMITTING" && Number(row.recovery_version || 0) !== 1
   };
 }
 
 export async function insertJob({ job, connection }) {
   await connection.execute(
-    `INSERT INTO bulk_import_jobs (id, tenant_id, import_type, original_filename, status, created_by)
-     VALUES (?, ?, ?, ?, 'VALIDATING', ?)`,
-    [uuidToBuffer(job.id), uuidToBuffer(job.tenantId), job.type, job.fileName, uuidToBuffer(job.createdBy)]
+    `INSERT INTO bulk_import_jobs (id, tenant_id, import_type, original_filename, status, created_by,
+       recovery_version, inventory_fingerprint)
+     VALUES (?, ?, ?, ?, 'VALIDATING', ?, 1, ?)`,
+    [uuidToBuffer(job.id), uuidToBuffer(job.tenantId), job.type, job.fileName, uuidToBuffer(job.createdBy),
+      job.inventoryFingerprint ? Buffer.from(job.inventoryFingerprint, "hex") : null]
   );
 }
 
@@ -49,7 +56,8 @@ export async function listJobs({ tenantId, page, pageSize, connection = getPrima
   const tenant = uuidToBuffer(tenantId);
   const [[count]] = await connection.execute("SELECT COUNT(*) AS total FROM bulk_import_jobs WHERE tenant_id = ?", [tenant]);
   const [rows] = await connection.execute(
-    `SELECT j.*, CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS created_by_name
+    `SELECT j.*, COALESCE(j.lease_expires_at > UTC_TIMESTAMP(6), 0) AS lease_active,
+       CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS created_by_name
        FROM bulk_import_jobs j JOIN users u ON u.id = j.created_by
       WHERE j.tenant_id = ? ORDER BY j.created_at DESC LIMIT ? OFFSET ?`,
     [tenant, pageSize, offset]
@@ -61,7 +69,8 @@ export async function listJobs({ tenantId, page, pageSize, connection = getPrima
 export async function findJob({ tenantId, jobId, connection = getPrimaryPool(), forUpdate = false }) {
   const lock = forUpdate ? " FOR UPDATE" : "";
   const [rows] = await connection.execute(
-    `SELECT j.*, CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS created_by_name
+    `SELECT j.*, COALESCE(j.lease_expires_at > UTC_TIMESTAMP(6), 0) AS lease_active,
+       CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS created_by_name
        FROM bulk_import_jobs j JOIN users u ON u.id = j.created_by
       WHERE j.tenant_id = ? AND j.id = ?${lock}`,
     [uuidToBuffer(tenantId), uuidToBuffer(jobId)]
@@ -81,25 +90,87 @@ export async function listRows({ tenantId, jobId, status = null, connection = ge
     source: json(row.source_data, {}), normalized: json(row.normalized_data), errors: json(row.errors_json, []) }));
 }
 
-export async function markRow({ rowId, status, errors = [], connection = getPrimaryPool() }) {
-  await connection.execute(
+export async function markRow({ tenantId, jobId, rowId, status, errors = [], connection }) {
+  const [result] = await connection.execute(
     `UPDATE bulk_import_rows SET status = ?, errors_json = ?, committed_at = IF(? = 'COMMITTED', UTC_TIMESTAMP(6), committed_at)
-      WHERE id = ?`, [status, errors.length ? JSON.stringify(errors) : null, status, uuidToBuffer(rowId)]
+      WHERE tenant_id = ? AND job_id = ? AND id = ? AND status = 'VALID'`,
+    [status, errors.length ? JSON.stringify(errors) : null, status,
+      uuidToBuffer(tenantId), uuidToBuffer(jobId), uuidToBuffer(rowId)]
+  );
+  if (result.affectedRows !== 1) throw new Error("IMPORT_ROW_STATE_CONFLICT");
+  await connection.execute(
+    `UPDATE bulk_import_jobs SET committed_rows = committed_rows + ?, failed_rows = failed_rows + ?,
+       last_progress_at = UTC_TIMESTAMP(6), lease_expires_at = DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 5 MINUTE)
+       WHERE tenant_id = ? AND id = ?`,
+    [status === "COMMITTED" ? 1 : 0, status === "FAILED" ? 1 : 0, uuidToBuffer(tenantId), uuidToBuffer(jobId)]
   );
 }
 
-export async function claimJob({ tenantId, jobId, connection = getPrimaryPool() }) {
+export async function claimJob({ tenantId, jobId, runToken, connection }) {
   const [result] = await connection.execute(
-    "UPDATE bulk_import_jobs SET status = 'COMMITTING' WHERE tenant_id = ? AND id = ? AND status = 'READY'",
-    [uuidToBuffer(tenantId), uuidToBuffer(jobId)]
+    `UPDATE bulk_import_jobs SET status = 'COMMITTING', recovery_version = 1, run_token = ?,
+       lease_expires_at = DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 5 MINUTE)
+       WHERE tenant_id = ? AND id = ? AND (status = 'READY' OR
+         (status = 'COMMITTING' AND recovery_version = 1 AND
+           (lease_expires_at IS NULL OR lease_expires_at <= UTC_TIMESTAMP(6))))`,
+    [uuidToBuffer(runToken), uuidToBuffer(tenantId), uuidToBuffer(jobId)]
   );
   return result.affectedRows === 1;
 }
 
-// The caller must supply the transaction used for both the final result and its inbox event.
-export async function finishCommit({ tenantId, jobId, actorUserId, committed, failed, connection }) {
+// Locks the job for the entire business mutation + row-result transaction.
+// An expired runner may continue only until a newer runner claims the token.
+export async function lockRun({ tenantId, jobId, runToken, connection }) {
+  const [rows] = await connection.execute(
+    `SELECT id FROM bulk_import_jobs WHERE tenant_id = ? AND id = ?
+       AND status = 'COMMITTING' AND recovery_version = 1 AND run_token = ? FOR UPDATE`,
+    [uuidToBuffer(tenantId), uuidToBuffer(jobId), uuidToBuffer(runToken)]
+  );
+  return rows.length === 1;
+}
+
+export async function findNextRow({ tenantId, jobId, connection }) {
+  const [rows] = await connection.execute(
+    `SELECT id, row_number, normalized_data FROM bulk_import_rows
+       WHERE tenant_id = ? AND job_id = ? AND status = 'VALID' ORDER BY row_number LIMIT 1 FOR UPDATE`,
+    [uuidToBuffer(tenantId), uuidToBuffer(jobId)]
+  );
+  return rows[0] ? { id: bufferToUuid(rows[0].id), rowNumber: Number(rows[0].row_number),
+    normalized: json(rows[0].normalized_data) } : null;
+}
+
+export async function findInventoryFile({ tenantId, fingerprint, connection = getPrimaryPool() }) {
+  const [rows] = await connection.execute(
+    "SELECT id FROM bulk_import_jobs WHERE tenant_id = ? AND import_type = 'INVENTORY' AND inventory_fingerprint = ?",
+    [uuidToBuffer(tenantId), Buffer.from(fingerprint, "hex")]
+  );
+  return rows[0] ? bufferToUuid(rows[0].id) : null;
+}
+
+export async function auditRun({ tenantId, jobId, resumed, context, connection }) {
   await connection.execute(
-    `UPDATE bulk_import_jobs SET status = ?, committed_rows = ?, failed_rows = ?, committed_by = ?, committed_at = UTC_TIMESTAMP(6)
+    `INSERT INTO audit_logs (id, tenant_id, actor_user_id, actor_type, action,
+       entity_type, entity_id, request_id, ip_address, user_agent, before_data, after_data)
+       VALUES (?, ?, ?, 'USER', ?, 'BULK_IMPORT', ?, ?, INET6_ATON(?), ?, NULL, ?)`,
+    [uuidToBuffer(createId()), uuidToBuffer(tenantId), uuidToBuffer(context.actorUserId),
+      resumed ? "bulk.import.resumed" : "bulk.import.started", uuidToBuffer(jobId), context.requestId,
+      context.ipAddress || null, context.userAgent?.slice(0, 500) || null,
+      JSON.stringify({ recoveryVersion: 1, unfinishedRowsOnly: true })]
+  );
+}
+
+// The caller must supply the transaction used for both the final result and its inbox event.
+export async function finishCommit({ tenantId, jobId, actorUserId, connection }) {
+  const [[counts]] = await connection.execute(
+    `SELECT SUM(status = 'COMMITTED') AS committed, SUM(status = 'FAILED') AS failed,
+       SUM(status NOT IN ('COMMITTED', 'FAILED')) AS unfinished FROM bulk_import_rows
+       WHERE tenant_id = ? AND job_id = ?`, [uuidToBuffer(tenantId), uuidToBuffer(jobId)]
+  );
+  if (Number(counts.unfinished)) throw new Error("IMPORT_ROWS_UNFINISHED");
+  const committed = Number(counts.committed); const failed = Number(counts.failed);
+  await connection.execute(
+    `UPDATE bulk_import_jobs SET status = ?, committed_rows = ?, failed_rows = ?, committed_by = ?, committed_at = UTC_TIMESTAMP(6),
+       run_token = NULL, lease_expires_at = NULL, last_progress_at = UTC_TIMESTAMP(6)
       WHERE tenant_id = ? AND id = ?`, [failed ? "COMPLETED_WITH_ERRORS" : "COMPLETED", committed, failed,
       uuidToBuffer(actorUserId), uuidToBuffer(tenantId), uuidToBuffer(jobId)]
   );

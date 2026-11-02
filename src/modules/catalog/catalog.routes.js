@@ -3,6 +3,8 @@ import { authenticate } from "../auth/auth.middleware.js";
 import { requirePermission, resolveTenantAccess } from "../access-control/access-control.middleware.js";
 import * as defaultService from "./catalog.service.js";
 import { createCatalogController } from "./catalog.controller.js";
+import { createSizeGuidesRouter } from "../size-guides/size-guides.routes.js";
+import { createSpecificationsRouter } from "../specifications/specifications.routes.js";
 import { createMasterSchema, createProductMediaSchema, createProductSchema, listInventorySchema, listMastersSchema,
   listProductsSchema, masterItemSchema, masterTypeSchema, productItemSchema,
   productApprovalSchema, productMediaItemSchema, productRejectionSchema, reorderProductMediaSchema, updateMasterSchema,
@@ -17,6 +19,8 @@ export function createCatalogRouter({
   const router = Router();
   const controller = createCatalogController(catalogService);
   router.use(authenticate, resolveTenant);
+  router.use('/catalog', createSizeGuidesRouter({authorize}));
+  router.use('/catalog', createSpecificationsRouter({authorize}));
   router.get("/catalog/lookups", authorize("catalog.product.read"), controller.lookups);
   router.get("/catalog/masters/:masterType", authorize("catalog.product.read"),
     validateParams(masterTypeSchema), validateQuery(listMastersSchema), controller.listMasters);
