@@ -7,10 +7,14 @@ import { createHomepageService } from "./homepage.service.js";
 import { saveHeroSchema, publishHeroSchema } from "./homepage.validators.js";
 import { createSectionsService } from "./sections.service.js";
 import { saveSectionsSchema, sectionsDocumentSchema } from "./sections.validators.js";
+import {createCollectionsRouter} from './collections.routes.js';
+import {createMerchandisingAdminRouter} from '../merchandising/merchandising.routes.js';
 
 export function createHomepageRouter({ service = createHomepageService(), sectionsService = createSectionsService(), resolveTenant = resolveTenantAccess,
   authorize = requirePermission } = {}) {
   const router = Router();
+  router.use(createCollectionsRouter());
+  router.use(createMerchandisingAdminRouter({resolveTenant,authorize}));
   const base = "/stores/:storeId/homepage-hero";
   const scope = (req) => [req.context.tenant.tenantId, req.validated.params.storeId];
   const context = (req) => ({ actorUserId: req.context.actor.userId, requestId: req.context.requestId,
@@ -34,6 +38,7 @@ export function createHomepageRouter({ service = createHomepageService(), sectio
   const sectionsBase = "/stores/:storeId/homepage-sections";
   router.use(sectionsBase, authenticate, resolveTenant, validateParams(storeParamsSchema), (_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   router.get(sectionsBase, authorize("settings.store.read"), async (req, res) => res.json({ data: await sectionsService.get(...scope(req)) }));
+  router.get(`${sectionsBase}/scopes`,authorize('settings.store.read'),validateQuery(Joi.object({search:Joi.string().trim().max(190).allow('').default(''),brandId:Joi.string().guid().allow(null),categoryId:Joi.string().guid().allow(null)})),async(req,res)=>res.json({data:await sectionsService.scopes(...scope(req),req.validated.query)}));
   router.put(sectionsBase, authorize("settings.store.manage"), validateBody(saveSectionsSchema),
     async (req, res) => res.json({ data: await sectionsService.save(...scope(req), req.validated.body, context(req)) }));
   router.post(`${sectionsBase}/publish`, authorize("settings.store.manage"), validateBody(publishHeroSchema),

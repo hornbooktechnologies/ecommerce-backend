@@ -44,3 +44,16 @@ package-lock.json
 !src/database/migrations/044_product_specifications.sql
 !src/database/migrations/045_product_questions.sql
 !src/database/migrations/046_review_photos.sql
+
+!src/database/migrations/047_shopping_discovery.sql
+
+!src/database/migrations/048_seller_public_profiles.sql
+!src/database/migrations/049_seller_ratings.sql
+!src/database/migrations/050_size_guide_defaults.sql
+!src/database/migrations/051_specification_filters.sql
+!src/database/migrations/052_numeric_specification_filters.sql
+!src/database/migrations/053_shopping_reminders.sql
+!src/database/migrations/054_store_collections.sql
+!src/database/migrations/055_merchandising_analytics.sql
+!src/database/migrations/056_cod_collections.sql
+!src/database/migrations/057_store_localization.sql

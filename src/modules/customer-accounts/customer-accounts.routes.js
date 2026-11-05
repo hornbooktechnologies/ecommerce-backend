@@ -1,4 +1,10 @@
+import * as reminders from '../reminders/reminders.service.js';
+import * as reminderInput from '../reminders/reminders.validators.js';
 import { Router, raw } from "express";
+import * as sellerRatings from '../seller-ratings/seller-ratings.service.js';
+import * as sellerInput from '../seller-ratings/seller-ratings.validators.js';
+import * as shopping from "../shopping/shopping.service.js";
+import * as shoppingInput from "../shopping/shopping.validators.js";
 import * as photos from '../review-photos/review-photos.service.js';
 import * as photoInput from '../review-photos/review-photos.validators.js';
 import Joi from "joi";
@@ -34,10 +40,23 @@ export function createCustomerAccountsRouter({ service = createCustomerAccountsS
     next();
   });
   const data = (res, result) => res.json({ data: result });
+  const shoppingRoute=(path,method,schema,operation)=>router[method](`${base}/${path}`,async(req,res)=>data(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>operation(req.customerScope,account,validate(schema,req.body),connection))));
+  shoppingRoute('discovery','post',shoppingInput.personalDiscovery,shopping.personalDiscovery);
+  shoppingRoute('history/view','post',shoppingInput.historyView,shopping.view);
+  shoppingRoute('history/clear','post',Joi.object({}), (scope,account,_input,connection)=>shopping.clear(scope,account,connection));
+  shoppingRoute('history/settings','put',shoppingInput.historySettings,shopping.historySettings);
+  shoppingRoute('shopping-alerts/list','post',shoppingInput.listing,shopping.list);
+  shoppingRoute('shopping-alerts/offer','post',shoppingInput.offerRequest,shopping.offerSubscriptions);
+  shoppingRoute('shopping-alerts/subscribe','post',shoppingInput.subscription,shopping.subscribe);
+  shoppingRoute('shopping-alerts/cancel','post',shoppingInput.cancellation,shopping.cancel);
+  shoppingRoute('reminders/settings','post',reminderInput.empty,reminders.settings);
+  shoppingRoute('reminders/consent','post',reminderInput.consent,reminders.consent);
   for (const [path, method, schema] of [["register", "register", schemas.register], ["login", "login", schemas.login], ["forgot-password", "forgot", schemas.forgot], ["verify", "verify", schemas.redeem], ["reset-password", "reset", schemas.redeem]]) {
     router.post(`${base}/${path}`, async (req, res) => data(res, await service[method](req.customerScope, validate(schema, req.body))));
   }
   router.get(`${base}/me`, async (req, res) => data(res, await service.me(req.customerScope, req.customerToken)));
+  router.post(`${base}/seller-ratings/list`,async(req,res)=>data(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>sellerRatings.ownOrders(req.customerScope,account,sellerInput.validate(sellerInput.order,req.body),connection))));
+  router.post(`${base}/seller-ratings/submit`,async(req,res)=>data(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>sellerRatings.submit(req.customerScope,account,sellerInput.validate(sellerInput.submission,req.body),connection))));
   const photoIds = req => ({reviewId:photoInput.validate(photoInput.uuid,req.params.reviewId),photoId:req.params.photoId?photoInput.validate(photoInput.uuid,req.params.photoId):undefined});
   router.get(`${base}/reviews/:reviewId/photos`,async(req,res)=>data(res,await service.withAuthenticatedAccount(req.customerScope,req.customerToken,(account,connection)=>photos.listOwn(req.customerScope,account,photoIds(req).reviewId,connection))));
   router.post(`${base}/reviews/:reviewId/photos/:photoId`,async(req,res,next)=>{

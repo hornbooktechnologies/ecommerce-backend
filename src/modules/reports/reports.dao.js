@@ -22,7 +22,9 @@ export async function getOptions({ tenantId, connection = getPrimaryPool() }) {
 }
 
 async function getSalesReport({ tenantId, filters, connection }) {
-  const tenant = uuidToBuffer(tenantId); const where = ["co.tenant_id = ?", "co.status NOT IN ('DRAFT','CANCELLED')"];
+  // Test orders stay in operational order listings, never in business sales totals.
+  const tenant = uuidToBuffer(tenantId); const where = ["co.tenant_id = ?", "co.status NOT IN ('DRAFT','CANCELLED')",
+    "COALESCE(co.payment_method, '') <> 'ONLINE_TEST'"];
   const params = [tenant]; where.push(dateClause("co.created_at", filters, params));
   if (filters.merchantId) { where.push("EXISTS (SELECT 1 FROM seller_orders sx WHERE sx.customer_order_id = co.id AND sx.merchant_id = ?)");
     params.push(uuidToBuffer(filters.merchantId)); }
@@ -127,7 +129,10 @@ async function getExpiryReport({ tenantId, filters, connection }) {
 }
 
 async function getVendorReport({ tenantId, filters, connection }) {
-  const tenant = uuidToBuffer(tenantId); const where = ["so.tenant_id = ?", "m.merchant_type = 'VENDOR'", "so.status <> 'CANCELLED'"];
+  const tenant = uuidToBuffer(tenantId); const where = ["so.tenant_id = ?", "m.merchant_type = 'VENDOR'", "so.status <> 'CANCELLED'",
+    `NOT EXISTS (SELECT 1 FROM customer_orders test_order
+      WHERE test_order.id = so.customer_order_id AND test_order.tenant_id = so.tenant_id
+        AND test_order.payment_method = 'ONLINE_TEST')`];
   const params = [tenant]; where.push(dateClause("so.created_at", filters, params));
   if (filters.merchantId) { where.push("so.merchant_id = ?"); params.push(uuidToBuffer(filters.merchantId)); }
   const clause = where.join(" AND "); const offset = (filters.page - 1) * filters.pageSize;
@@ -159,7 +164,13 @@ async function getVendorReport({ tenantId, filters, connection }) {
 }
 
 async function getWithholdingReport({ tenantId, filters, connection, type }) {
-  const tenant = uuidToBuffer(tenantId); const where = ["mtw.tenant_id = ?", "mtw.withholding_type = ?"];
+  const tenant = uuidToBuffer(tenantId); const where = ["mtw.tenant_id = ?", "mtw.withholding_type = ?",
+    // Preserve manual withholding rows without an order link; exclude linked test orders.
+    `NOT EXISTS (SELECT 1 FROM seller_orders test_seller
+      JOIN customer_orders test_order ON test_order.id = test_seller.customer_order_id
+        AND test_order.tenant_id = test_seller.tenant_id
+      WHERE test_seller.id = mtw.seller_order_id AND test_seller.tenant_id = mtw.tenant_id
+        AND test_order.payment_method = 'ONLINE_TEST')`];
   const params = [tenant, type]; where.push(dateClause("mtw.created_at", filters, params));
   if (filters.merchantId) { where.push("mtw.merchant_id = ?"); params.push(uuidToBuffer(filters.merchantId)); }
   const clause = where.join(" AND "); const offset = (filters.page - 1) * filters.pageSize;

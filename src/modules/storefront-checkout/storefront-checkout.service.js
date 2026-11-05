@@ -13,6 +13,7 @@ import { createOrdersService } from "../orders/orders.service.js";
 import * as defaultDao from "./storefront-checkout.dao.js";
 import { checkDeliveryAvailability } from "../storefront/delivery-availability.service.js";
 import { createPaymentsService } from "../payments/payments.service.js";
+import {optional,recordOrder} from '../merchandising/merchandising.service.js';
 
 const fail = (code, message, status = 409) => { throw new AppError({ code, message, status }); };
 const fingerprint = (input, review, slot) => digest(JSON.stringify({ input, review, slot: [slot.id, slot.startsAt, slot.endsAt] })).toString("hex");
@@ -60,7 +61,7 @@ export function createStorefrontCheckoutService({ dao = defaultDao, accountDao =
       line1: address.line1, line2: address.line2, landmark: address.landmark, city: address.city,
       stateCode: address.stateCode, stateName: states[address.stateCode], postalCode: address.postalCode },
     deliverySlotId: slot.id, promotionId, couponCode: selection.couponCode, customerNotes: selection.notes, internalNotes: "",
-    items: cart.items.map((line) => ({ ...line, substitutionPreference: selection.substitutionPreference })) };
+    items: cart.items.map(({merchTouchId,...line}) => ({ ...line, substitutionPreference: selection.substitutionPreference })) };
     // Use the authenticated customer, never the admin email-or-phone matching heuristic.
     // Use the storefront's dated price list and exact eligible offers, with the existing GST engine.
     const engine = orderFactory({ transaction: async (_tenant, operation) => operation(connection), dao: { ...orderDao,
@@ -137,6 +138,7 @@ export function createStorefrontCheckoutService({ dao = defaultDao, accountDao =
       return payments.verify(args, saved.receipt, input);
     }),
     place: (store, token, { quoteId }, context = {}) => authenticated(store, token, async (customer, connection) => {
+      const {merchToken,...orderContext}=context;
       const saved = await dao.readQuote({ ...store, customerId: customer.customerId, quoteId, connection });
       if (!saved) fail("CHECKOUT_NOT_FOUND", "Checkout was not found for this account.", 404);
       if (saved.receipt) return { receipt: await payments.read({ ...store, customerId: customer.customerId, connection }, saved.receipt) }; // Replay is safe.
@@ -145,13 +147,14 @@ export function createStorefrontCheckoutService({ dao = defaultDao, accountDao =
       const cart = await cartDao.read(key);
       if (!cart || cart.revision !== saved.revision) fail("CHECKOUT_CART_CHANGED", "Your bag changed. Review the updated bag before placing the order.");
       const { input, slot, engine } = await prepare(store, customer, cart, saved.quote.selection, connection);
-      const result = await engine.createOrder(store.tenantId, input, { ...context, actorUserId: null, source: "STOREFRONT",
+      const result = await engine.createOrder(store.tenantId, input, { ...orderContext, actorUserId: null, source: "STOREFRONT",
         verifyReview: (review) => {
           if (fingerprint(input, review, slot) !== saved.quote.fingerprint) fail("CHECKOUT_CHANGED", "Pricing, delivery or address details changed. Review the updated order before submitting.");
         } });
       const { id, orderNumber, grandTotal, currency, placedAt } = result.order;
       const paymentMethod = saved.quote.selection.paymentMethod || "COD";
       await payments.attach({ ...store, customerId: customer.customerId, connection }, result.order, paymentMethod, saved.quote.review);
+      await optional(()=>recordOrder(store,merchToken,{orderId:id,items:cart.items},connection));
       const receipt = { id, orderNumber, grandTotal, currency, placedAt, status: "PLACED", paymentStatus: "UNPAID",
         quoteId, paymentMethod, testMode: paymentMethod === "ONLINE_TEST", canPay: paymentMethod === "ONLINE_TEST",
         message: paymentMethod === "COD" ? "Order received. Pay on delivery. No payment has been collected online."

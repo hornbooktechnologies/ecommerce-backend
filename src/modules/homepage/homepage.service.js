@@ -5,6 +5,7 @@ import * as defaultDao from "./homepage.dao.js";
 import * as stores from "../store-operations/store-operations.dao.js";
 import * as catalog from "../storefront/storefront.dao.js";
 import { productMediaStorage } from "../catalog/product-media-storage.js";
+import {collectionForLink} from './collections.service.js';
 
 export const emptyHero = () => ({ enabled: true, autoplay: true, intervalSeconds: 6, slides: [] });
 const fail = (code, message, status = 422) => { throw new AppError({ code, message, status }); };
@@ -25,6 +26,7 @@ export function createHomepageService({ dao = defaultDao, storeDao = stores, cat
         fail("HERO_IMAGE_INVALID", `Slide ${index + 1}: upload an image for this store.`);
       }
       if (!publishing || !document.enabled || !slide.enabled) continue;
+      if(!slide.productSlug&&!await collectionForLink(scope,slide.href,{connection}))fail('HERO_COLLECTION_UNAVAILABLE',`Slide ${index+1}: choose a published collection from this store.`);
       const product = slide.productSlug ? await catalogDao.findProduct({ scope, slug: slide.productSlug, connection }) : null;
       if (slide.productSlug && !product) fail("HERO_PRODUCT_UNAVAILABLE", `Slide ${index + 1}: choose a published product with an active offer in this store.`);
       if (!slide.title && !product) fail("HERO_TITLE_REQUIRED", `Slide ${index + 1}: enter a headline.`);
@@ -92,6 +94,7 @@ export async function publicHero(scope, { dao = defaultDao, catalogDao = catalog
   const { enabled, autoplay, intervalSeconds, slides } = row.published;
   if (!enabled) return { enabled: false, autoplay, intervalSeconds, slides: [] };
   const visible = await Promise.all(slides.filter((slide) => slide.enabled).map(async (slide) => {
+    if(!slide.productSlug&&!await collectionForLink(scope,slide.href,{live:true}))return null;
     const product = slide.productSlug ? await catalogDao.findProduct({ scope, slug: slide.productSlug }) : null;
     if (slide.productSlug && !product) return null;
     return { id: slide.id, eyebrow: slide.eyebrow, title: slide.title || product?.name,

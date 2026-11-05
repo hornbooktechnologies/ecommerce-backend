@@ -3,6 +3,7 @@ import {createId} from '../../core/identifiers/uuid.js';
 import {withTransaction} from '../../database/transaction.js';
 import {insertAudit} from '../catalog/catalog.dao.js';
 import * as dao from './size-guides.dao.js';
+import * as defaults from './size-guide-defaults.dao.js';
 
 const fail=(code,message,status)=>{throw new AppError({code,message,status});};
 const requiredGuide=async(input)=>{const guide=await dao.find(input);if(!guide)fail('SIZE_GUIDE_NOT_FOUND','The size guide could not be found.',404);return guide;};
@@ -25,16 +26,22 @@ export async function save(tenantId,guideId,input,context) {
 export async function assignment(tenantId,productId) {
  const product=await requiredProduct({tenantId,productId});
  const guideId=await dao.binding({tenantId,productId});
- return {product,guideId,guide:guideId?await dao.find({tenantId,guideId}):null};
+ const hidden=await defaults.excluded({tenantId,productId}),resolved=await defaults.resolve({tenantId,productId});
+ const resolvedGuide=resolved.guideId?await dao.find({tenantId,guideId:resolved.guideId}):null;
+ return {product,guideId,guide:guideId?await dao.find({tenantId,guideId}):null,mode:hidden?'NONE':guideId?'GUIDE':'INHERIT',resolved:{...resolved,guide:resolvedGuide,blocked:!!resolved.guideId&&(!resolvedGuide||resolvedGuide.status!=='ACTIVE')}};
 }
 export async function assign(tenantId,productId,input,context) {
  return withTransaction(tenantId,async connection=>{
   await requiredProduct({tenantId,productId,connection,lock:true});
   const previous=await dao.binding({tenantId,productId,connection});
-  if(previous!==input.previousGuideId)fail('SIZE_GUIDE_ASSIGNMENT_CHANGED','This assignment changed. Reopen it before saving.',409);
+  const hidden=await defaults.excluded({tenantId,productId,connection}),previousMode=hidden?'NONE':previous?'GUIDE':'INHERIT';
+  const mode=input.mode||(input.guideId?'GUIDE':'INHERIT'),expectedMode=input.previousMode||(input.previousGuideId?'GUIDE':'INHERIT');
+  if(previous!==input.previousGuideId||previousMode!==expectedMode)fail('SIZE_GUIDE_ASSIGNMENT_CHANGED','This assignment changed. Reopen it before saving.',409);
+  if((mode==='GUIDE')!==Boolean(input.guideId))fail('SIZE_GUIDE_MODE','Choose a guide only for the product-specific mode.',422);
   if(input.guideId){const guide=await requiredGuide({tenantId,guideId:input.guideId,connection,lock:true});if(guide.status!=='ACTIVE')fail('SIZE_GUIDE_INACTIVE','Choose an active size guide.',422);}
   await dao.bind({tenantId,productId,guideId:input.guideId,connection});
-  await audit({tenantId,entityId:productId,action:'catalog.product.size_guide.changed',afterData:{productId,previousGuideId:previous,guideId:input.guideId},context,connection});
-  return {productId,guideId:input.guideId};
+  await defaults.setExcluded({tenantId,productId,excluded:mode==='NONE',connection});
+  await audit({tenantId,entityId:productId,action:'catalog.product.size_guide.changed',afterData:{productId,previousGuideId:previous,guideId:input.guideId,previousMode,mode},context,connection});
+  return {productId,guideId:input.guideId,mode};
  });
 }

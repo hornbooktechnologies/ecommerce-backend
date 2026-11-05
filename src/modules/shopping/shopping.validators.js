@@ -1,0 +1,10 @@
+import Joi from 'joi';
+export const uuid=Joi.string().guid({version:['uuidv4','uuidv5','uuidv7']}).lowercase().required();
+export const historyView=Joi.object({productId:uuid});
+export const offerRequest=Joi.object({offerId:uuid});
+export const historySettings=Joi.object({enabled:Joi.boolean().strict().required(),version:Joi.number().integer().min(0).required()});
+export const discovery=Joi.object({currentProductId:uuid.optional(),recentIds:Joi.array().items(uuid.optional()).unique().max(20).default([])});
+export const personalDiscovery=Joi.object({currentProductId:uuid.optional()});
+export const subscription=Joi.object({offerId:uuid,kind:Joi.string().valid('BACK_IN_STOCK','PRICE_DROP').required(),consent:Joi.boolean().valid(true).strict().required(),version:Joi.number().integer().min(1)});
+export const cancellation=Joi.object({subscriptionId:uuid,version:Joi.number().integer().min(1).required()});
+export const listing=Joi.object({page:Joi.number().integer().min(1).max(10000).default(1),pageSize:Joi.number().valid(10,20,50).default(10),status:Joi.string().valid('ALL','ACTIVE','TRIGGERED','CANCELLED','EXPIRED').default('ALL')});

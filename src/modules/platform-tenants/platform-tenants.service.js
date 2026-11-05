@@ -26,7 +26,7 @@ const rolePermissions = {
   inventory_manager: ["dashboard.read", "inventory.stock.read", "inventory.stock.manage"],
   order_manager: ["dashboard.read", "order.read", "order.create", "order.manage", "customer.read", "customer.manage", "promotion.read", "promotion.manage", "return.read", "return.manage"],
   vendor_manager: ["dashboard.read", "vendor.read", "vendor.manage", "catalog.offer.read", "catalog.offer.manage"],
-  finance_manager: ["dashboard.read", "marketplace.settlement.read", "marketplace.settlement.manage", "report.sales.read"],
+  finance_manager: ["dashboard.read", "order.read", "order.payment.collect", "marketplace.settlement.read", "marketplace.settlement.manage", "report.sales.read"],
   analyst: ["dashboard.read", "order.read", "customer.read", "promotion.read", "catalog.product.read", "inventory.stock.read", "vendor.read", "return.read", "marketplace.settlement.read", "report.sales.read"],
   auditor: ["dashboard.read", "order.read", "customer.read", "promotion.read", "catalog.product.read", "inventory.stock.read", "vendor.read", "return.read", "marketplace.settlement.read", "report.sales.read", "audit.read"],
   vendor_owner: ["vendor.dashboard.read", "vendor.profile.read", "vendor.profile.update",

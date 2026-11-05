@@ -5,6 +5,14 @@ import * as defaultDao from "./sections.dao.js";
 import * as assets from "./homepage.dao.js";
 import * as stores from "../store-operations/store-operations.dao.js";
 import * as catalog from "../storefront/storefront.dao.js";
+import {collectionScope,collectionChoices} from './sections-scope.dao.js';
+import * as collections from './collections.dao.js';
+import {renderCollection,collectionForLink} from './collections.service.js';
+
+export function sectionActiveAt(section,at=Date.now()){
+  const start=section.startsAt?Date.parse(section.startsAt):-Infinity,end=section.endsAt?Date.parse(section.endsAt):Infinity;
+  return section.enabled&&Number.isFinite(Number(at))&&!Number.isNaN(start)&&!Number.isNaN(end)&&Number(at)>=start&&Number(at)<end;
+}
 
 export function defaultSections() {
   const shelf = (key, title, subtitle, rule) => ({ key, title, subtitle, rule, enabled: true,
@@ -18,19 +26,29 @@ export function defaultSections() {
   ] };
 }
 
-export async function renderSections(scope, document, { catalogDao = catalog, connection } = {}) {
+export async function renderSections(scope, document, { catalogDao = catalog, connection,preview=false,at=Date.now() } = {}) {
   const sections = [];
   for (const section of document.sections.filter((item) => item.enabled)) {
+    if(!preview&&!sectionActiveAt(section,at))continue;
     if (section.key === "BANNER") {
       if (!section.imageUrl || !section.title) continue;
+      if(!preview&&!await collectionForLink(scope,section.href,{connection,live:true}))continue;
       sections.push({ ...section }); continue;
     }
+    if(section.collectionId){
+      const row=await collections.find({...scope,collectionId:section.collectionId,connection});
+      const rendered=await renderCollection(scope,preview&&row?{...row,draft:row.published}:row,{page:1,pageSize:section.limit},connection,{preview});
+      if(rendered?.items.length)sections.push({key:section.key,title:section.title||rendered.title,subtitle:section.subtitle,collectionSlug:rendered.slug,viewAllHref:section.viewAllHref?`/collections/${rendered.slug}`:'',viewAllLabel:section.viewAllLabel,items:rendered.items});
+      continue;
+    }
+    const scopeFilters=await collectionScope({...scope,section,connection});if(!scopeFilters)continue;
     let items;
     if (section.rule === "MANUAL") {
-      const selected = await Promise.all(section.productSlugs.map((slug) => catalogDao.findProduct({ scope, slug, connection })));
-      items = selected.filter(Boolean).slice(0, section.limit);
+      const selected=await catalogDao.listProducts({scope,connection,filters:{...scopeFilters,productSlugs:section.productSlugs,page:1,pageSize:12,sort:'featured'}});
+      const bySlug=new Map(selected.items.map(item=>[item.slug,item]));items=section.productSlugs.map(slug=>bySlug.get(slug)).filter(Boolean).slice(0,section.limit);
     } else {
       const result = await catalogDao.listProducts({ scope, connection, filters: {
+        ...scopeFilters,
         page: 1, pageSize: section.limit,
         sort: { DISCOUNT: "discount", REVIEWS: "review_count", NEWEST: "newest" }[section.rule],
         ...(section.rule === "DISCOUNT" ? { minDiscount: 0.000001 } : {})
@@ -38,7 +56,7 @@ export async function renderSections(scope, document, { catalogDao = catalog, co
       items = result.items;
     }
     if (items.length) sections.push({ key: section.key, title: section.title, subtitle: section.subtitle,
-      viewAllHref: section.viewAllHref, viewAllLabel: section.viewAllLabel, items });
+      viewAllHref: section.viewAllHref?.startsWith('/collections/')?await collectionForLink(scope,section.viewAllHref,{connection,live:true})?section.viewAllHref:'':section.viewAllHref&&(section.brandId||section.categoryId||(section.viewAllHref==='/products'&&section.inStockOnly))?`/products?${new URLSearchParams({...(scopeFilters.brand?{brands:scopeFilters.brand}:{}),...(scopeFilters.category?{category:scopeFilters.category}:{}),...(scopeFilters.inStock?{inStock:'true'}:{})})}`:section.viewAllHref, viewAllLabel: section.viewAllLabel, items });
   }
   return { sections };
 }
@@ -61,6 +79,8 @@ export function createSectionsService({ dao = defaultDao, assetDao = assets, sto
   async function validate(scope, document, connection, publishing) {
     for (const [index, section] of document.sections.entries()) {
       const field = (name) => `sections.${index}.${name}`;
+      if(section.collectionId){const linked=await collections.find({...scope,collectionId:section.collectionId,connection});if(!linked||!linked.visible||!linked.published)fail('SECTION_COLLECTION_INVALID','Choose a published reusable collection from this store.',422,field('collectionId'));}
+      if(section.key!=='BANNER'&&!section.collectionId&&!await collectionScope({...scope,section,connection}))fail('SECTION_SCOPE_INVALID','Choose active brand/category values from this tenant.',422,field('brandId'));
       if (section.key === "BANNER" && section.imageUrl && !await assetDao.ownsAsset({ ...scope, url: section.imageUrl, connection })) {
         fail("SECTION_IMAGE_INVALID", "Upload a banner image for this store.", 422, field("imageUrl"));
       }
@@ -70,7 +90,7 @@ export function createSectionsService({ dao = defaultDao, assetDao = assets, sto
         if (!section.imageUrl) fail("SECTION_IMAGE_REQUIRED", "Upload a campaign image before enabling the banner.", 422, field("imageUrl"));
         if (!section.altText) fail("SECTION_ALT_REQUIRED", "Describe the banner image for screen readers.", 422, field("altText"));
         if (!section.ctaLabel) fail("SECTION_CTA_REQUIRED", "Enter the banner button label.", 422, field("ctaLabel"));
-      } else if (section.rule === "MANUAL") {
+      } else if (!section.collectionId&&section.rule === "MANUAL") {
         if (!section.productSlugs.length) fail("SECTION_PRODUCTS_REQUIRED", "Select products for the manual collection.", 422, field("productSlugs"));
         for (const slug of section.productSlugs) {
           if (!await catalogDao.findProduct({ scope, slug, connection })) {
@@ -79,11 +99,13 @@ export function createSectionsService({ dao = defaultDao, assetDao = assets, sto
         }
       }
       const href = section.key === "BANNER" ? section.href : section.viewAllHref;
+      if(!section.collectionId&&!await collectionForLink(scope,href,{connection}))fail('SECTION_COLLECTION_INVALID','Choose a published reusable collection from this store.',422,field('viewAllHref'));
       const hrefField = field(section.key === "BANNER" ? "href" : "viewAllHref");
-      if (href?.startsWith("/p/") && !await catalogDao.findProduct({ scope, slug: href.slice(3), connection })) {
+      const scopedCollection=section.key!=='BANNER'&&(section.brandId||section.categoryId);
+      if (!scopedCollection&&href?.startsWith("/p/") && !await catalogDao.findProduct({ scope, slug: href.slice(3), connection })) {
         fail("SECTION_LINK_INVALID", "Choose a published product destination in this store.", 422, hrefField);
       }
-      if (href?.startsWith("/c/")) {
+      if (!scopedCollection&&href?.startsWith("/c/")) {
         const { categories } = await catalogDao.listFacets({ scope, connection });
         if (!categories.some((category) => `/c/${category.slug}` === href)) fail("SECTION_LINK_INVALID", "Choose an available category destination.", 422, hrefField);
       }
@@ -91,6 +113,7 @@ export function createSectionsService({ dao = defaultDao, assetDao = assets, sto
     }
   }
   return {
+    async scopes(tenantId,storeId,query){await resolve(tenantId,storeId);return collectionChoices({tenantId,...query});},
     async get(tenantId, storeId) {
       await resolve(tenantId, storeId);
       return await dao.read({ tenantId, storeId }) || { draft: defaultSections(), published: null, revision: 0, publishedAt: null };
@@ -98,7 +121,7 @@ export function createSectionsService({ dao = defaultDao, assetDao = assets, sto
     async preview(tenantId, storeId, document) {
       const scope = await resolve(tenantId, storeId);
       await validate(scope, document, undefined, false);
-      return renderSections(scope, document, { catalogDao });
+      return renderSections(scope, document, { catalogDao,preview:true });
     },
     async save(tenantId, storeId, input, context, publishing = false) {
       return transaction(tenantId, async (connection) => {

@@ -13,12 +13,13 @@ const navigationCatalog = {
   admin: [
     { label: "Overview", href: "/admin", icon: "overview", capability: "dashboard.read" },
     { label: "Orders", href: "/admin/orders", icon: "orders", capability: "order.read" },
+    { label: "Shopping alerts", href: "/admin/shopping-alerts", icon: "shopping", capability: "customer.read" },
     { label: "Customers", href: "/admin/customers", icon: "customers", capability: "customer.read" },
     { label: "Offers & coupons", href: "/admin/promotions", icon: "promotions", capability: "promotion.read" },
     { label: "Returns", href: "/admin/returns", icon: "returns", capability: "return.read" },
     { label: "Warranties", href: "/admin/warranties", icon: "warranties", capability: "warranty.read" },
     { label: "Catalog", href: "/admin/catalog/products", matchPrefix: "/admin/catalog", icon: "catalog", capability: "catalog.product.read" },
-    { label: "Product ratings", href: "/admin/ratings", icon: "ratings", capability: "rating.read" },
+    { label: "Ratings & reviews", href: "/admin/ratings", icon: "ratings", capability: "rating.read" },
     { label: 'Product questions', href: '/admin/questions', icon: 'questions', capability: 'question.read' },
     { label: "Seller pricing", href: "/admin/offers", icon: "offers", capability: "catalog.offer.read" },
     { label: "Inventory", href: "/admin/inventory", icon: "inventory", capability: "inventory.stock.read" },
@@ -54,7 +55,7 @@ function permissionsFor(assignments) {
 const adminGroups = [
   ["daily", "Daily operations", ["overview", "orders", "customers", "returns", "warranties"]],
   ["products", "Products & stock", ["catalog", "offers", "inventory", "procurement", "bulk"]],
-  ["storefront", "Storefront & marketing", ["homepage", "promotions", "ratings", "questions", "newsletter", "content"]],
+  ["storefront", "Storefront & marketing", ["homepage", "promotions", "ratings", "questions", "shopping", "newsletter", "content"]],
   ["business", "Business management", ["stores", "vendors", "finance", "reports"]],
   ["settings", "Settings", ["taxes", "users", "access"]]
 ];

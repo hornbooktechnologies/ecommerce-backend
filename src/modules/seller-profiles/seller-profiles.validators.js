@@ -1,0 +1,6 @@
+import Joi from 'joi';
+export const uuid=Joi.string().guid({version:['uuidv4','uuidv5','uuidv7']}).lowercase().required();
+export const params=Joi.object({vendorId:uuid,storeId:uuid});
+export const content=Joi.object({displayName:Joi.string().trim().min(2).max(190).required(),tagline:Joi.string().trim().max(140).allow('').default(''),about:Joi.string().trim().max(2000).allow('').default(''),location:Joi.string().trim().max(120).allow('').default(''),useCompanyLogo:Joi.boolean().strict().required()});
+export const update=Joi.object({version:Joi.number().integer().min(0).max(4294967294).required(),action:Joi.string().valid('DRAFT','PUBLISH','HIDE').required(),content:Joi.when('action',{is:'HIDE',then:Joi.forbidden(),otherwise:content.required()})}).custom((value,helpers)=>value.action==='PUBLISH'&&value.content.about.length<20?helpers.error('profile.about'):value).messages({'profile.about':'Add at least 20 characters describing the seller before publishing.'});
+export const publicQuery=Joi.object({page:Joi.number().integer().min(1).max(10000).default(1),pageSize:Joi.number().valid(10,20,50).default(10),search:Joi.string().trim().max(190).allow('').default(''),sort:Joi.string().valid('newest','price_asc','price_desc').default('newest'),inStock:Joi.boolean().default(false)});

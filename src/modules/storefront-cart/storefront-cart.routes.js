@@ -24,7 +24,7 @@ export function createStorefrontCartRouter({ service = createStorefrontCartServi
       // A malformed Authorization header must never silently become a guest request.
       const sessionToken = req.headers.authorization ? req.headers.authorization.match(/^Bearer ([a-f0-9]{64})$/)?.[1] || "invalid" : "";
       const guestToken = req.headers["x-cart-token"] || "";
-      res.json({ data: await service.operate(store, { sessionToken, guestToken }, operation, body) });
+      res.json({ data: await service.operate(store, { sessionToken, guestToken,merchToken:req.get('sec-gpc')==='1'||req.get('dnt')==='1'?'':req.get('x-merchandising-token')||'' }, operation, body) });
     });
   }
   return router;

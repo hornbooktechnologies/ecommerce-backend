@@ -3,7 +3,7 @@ import {uuidToBuffer as id,bufferToUuid as uuid} from '../../core/identifiers/uu
 const json=value=>typeof value==='string'?JSON.parse(value):value;
 const map=row=>({id:uuid(row.id),code:row.code,name:row.name,vertical:row.vertical,unit:row.unit,status:row.status,categoryId:uuid(row.category_id),categoryName:row.category_name||'',
  dataType:row.data_type,group:row.group_name,helpText:row.help_text,options:json(row.options_json),
- customerVisible:Boolean(row.customer_visible),sortOrder:Number(row.sort_order),version:Number(row.version)});
+ customerVisible:Boolean(row.customer_visible),filterable:Boolean(row.filterable),sortOrder:Number(row.sort_order),version:Number(row.version)});
 export async function lockTenant({tenantId,connection}){await connection.execute('SELECT id FROM tenants WHERE id=? FOR UPDATE',[id(tenantId)]);}
 export async function scopes({tenantId,vertical,categoryId,connection}){
  const [[type]]=await connection.execute("SELECT vertical FROM tenant_product_verticals WHERE tenant_id=? AND vertical=? AND status='ACTIVE'",[id(tenantId),vertical]);
@@ -25,9 +25,9 @@ export async function list({tenantId,filters,connection=getPrimaryPool()}){
 }
 export async function find({tenantId,definitionId,connection=getPrimaryPool()}){const [[row]]=await connection.execute('SELECT * FROM specification_definitions WHERE tenant_id=? AND id=?',[id(tenantId),id(definitionId)]);return row?map(row):null;}
 export async function save({tenantId,definitionId,input,create,connection}){
- const mutable=[input.name,input.unit,input.group,input.helpText,JSON.stringify(input.options),input.customerVisible,input.sortOrder,input.status];
- if(create)await connection.execute(`INSERT INTO specification_definitions(name,unit,group_name,help_text,options_json,customer_visible,sort_order,status,tenant_id,id,code,vertical,category_id,data_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[...mutable,id(tenantId),id(definitionId),input.code,input.vertical,input.categoryId?id(input.categoryId):null,input.dataType]);
- else await connection.execute('UPDATE specification_definitions SET name=?,unit=?,group_name=?,help_text=?,options_json=?,customer_visible=?,sort_order=?,status=?,version=version+1 WHERE tenant_id=? AND id=?',[...mutable,id(tenantId),id(definitionId)]);
+ const mutable=[input.name,input.unit,input.group,input.helpText,JSON.stringify(input.options),input.customerVisible,input.filterable,input.sortOrder,input.status];
+ if(create)await connection.execute(`INSERT INTO specification_definitions(name,unit,group_name,help_text,options_json,customer_visible,filterable,sort_order,status,tenant_id,id,code,vertical,category_id,data_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[...mutable,id(tenantId),id(definitionId),input.code,input.vertical,input.categoryId?id(input.categoryId):null,input.dataType]);
+ else await connection.execute('UPDATE specification_definitions SET name=?,unit=?,group_name=?,help_text=?,options_json=?,customer_visible=?,filterable=?,sort_order=?,status=?,version=version+1 WHERE tenant_id=? AND id=?',[...mutable,id(tenantId),id(definitionId)]);
 }
 export async function usedValues({tenantId,definitionId,connection}){const [rows]=await connection.execute('SELECT DISTINCT value_json FROM product_specification_values WHERE tenant_id=? AND definition_id=?',[id(tenantId),id(definitionId)]);return rows.map(row=>json(row.value_json));}
 export async function product({tenantId,productId,connection=getPrimaryPool(),lock=false}){

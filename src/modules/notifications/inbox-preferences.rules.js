@@ -1,7 +1,7 @@
 const labels = Object.freeze({ ORDERS: "Orders & delivery", RETURNS: "Returns & exchanges", PAYMENTS: "Payments",
-  INVENTORY: "Inventory alerts", WARRANTIES: "Warranty updates", IMPORTS: "CSV import results", APPROVALS: "Product & vendor approvals", QUESTIONS:'Product questions & answers' });
+  INVENTORY: "Inventory alerts", WARRANTIES: "Warranty updates", IMPORTS: "CSV import results", APPROVALS: "Product & vendor approvals", QUESTIONS:'Product questions & answers', SHOPPING:'Shopping alerts' });
 const optional = Object.freeze({ ADMIN: Object.freeze(["INVENTORY", "WARRANTIES", "IMPORTS", "APPROVALS", 'QUESTIONS']),
-  CUSTOMER: Object.freeze(["RETURNS", "WARRANTIES", 'QUESTIONS']) });
+  CUSTOMER: Object.freeze(["RETURNS", "WARRANTIES", 'QUESTIONS', 'SHOPPING']) });
 const required = Object.freeze({ ADMIN: Object.freeze(["ORDERS", "RETURNS", "PAYMENTS"]), CUSTOMER: Object.freeze(["ORDERS", "PAYMENTS"]) });
 export const optionalCategories = (audience) => optional[audience] || [];
 export const isOptionalCategory = (audience, category) => optionalCategories(audience).includes(category);

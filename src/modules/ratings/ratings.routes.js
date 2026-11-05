@@ -1,4 +1,6 @@
 import { Router } from "express";
+import * as sellerRatings from '../seller-ratings/seller-ratings.service.js';
+import * as sellerInput from '../seller-ratings/seller-ratings.validators.js';
 import * as photos from '../review-photos/review-photos.service.js';
 import * as photoInput from '../review-photos/review-photos.validators.js';
 import { requirePermission, resolveTenantAccess } from "../access-control/access-control.middleware.js";
@@ -12,6 +14,8 @@ export function createRatingsRouter({ ratingsService = defaultService,
   resolveTenant = resolveTenantAccess, authorize = requirePermission } = {}) {
   const router = Router(); const controller = createRatingsController(ratingsService);
   router.use(authenticate, resolveTenant);
+  router.get('/seller-ratings',authorize('rating.read'),async(req,res)=>res.json({data:await sellerRatings.list(req.context.tenant.tenantId,sellerInput.validate(sellerInput.listing,req.query))}));
+  router.post('/seller-ratings/:ratingId/moderate',authorize('rating.read'),authorize('rating.moderate'),async(req,res)=>res.json({data:await sellerRatings.moderate(req.context.tenant.tenantId,sellerInput.validate(sellerInput.uuid.required(),req.params.ratingId),sellerInput.validate(sellerInput.moderation,req.body),{actorUserId:req.context.actor.userId,requestId:req.context.requestId,ipAddress:req.ip,userAgent:req.get('user-agent')||null})}));
   router.get("/ratings/options", authorize("rating.read"), controller.options);
   const ids=req=>({reviewId:photoInput.validate(photoInput.uuid,req.params.ratingId),photoId:req.params.photoId?photoInput.validate(photoInput.uuid,req.params.photoId):undefined});
   router.get('/ratings/:ratingId/photos',authorize('rating.read'),async(req,res)=>res.json({data:await photos.adminList(req.context.tenant.tenantId,ids(req).reviewId)}));

@@ -8,7 +8,7 @@ import { createInboxService } from "./inbox.service.js";
 
 export const inboxSchemas = {
   list: Joi.object({
-    category: Joi.string().uppercase().valid("ALL", "ORDERS", "RETURNS", "PAYMENTS", "INVENTORY", "WARRANTIES", "IMPORTS", "APPROVALS", "TENANTS", "QUESTIONS").default("ALL"),
+    category: Joi.string().uppercase().valid("ALL", "ORDERS", "RETURNS", "PAYMENTS", "INVENTORY", "WARRANTIES", "IMPORTS", "APPROVALS", "TENANTS", "QUESTIONS", "SHOPPING").default("ALL"),
     search: Joi.string().trim().max(100).allow("").default(""),
     filter: Joi.string().uppercase().valid("ALL", "UNREAD").default("ALL"),
     page: Joi.number().integer().min(1).max(10000).default(1), pageSize: Joi.number().integer().valid(10, 20, 50).default(10) }),

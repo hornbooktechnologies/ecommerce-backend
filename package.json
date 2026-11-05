@@ -59,7 +59,8 @@
     "seed:dummy-promotions": "node scripts/seed-dummy-promotions.js",
     "seed:dummy-ratings": "node scripts/seed-dummy-ratings.js",
     "seed:hornbook-storefront-catalog": "node src/database/seeds/seed-hornbook-storefront-catalog.js",
-    "promotions:order:verify": "node scripts/verify-promotion-order.js"
+    "promotions:order:verify": "node scripts/verify-promotion-order.js",
+    "shopping:alerts": "node src/workers/shopping-alerts.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

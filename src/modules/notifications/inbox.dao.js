@@ -1,3 +1,5 @@
+import {reminderVisible} from '../reminders/reminders.rules.js';
+import {shoppingNotificationVisible} from "../shopping/shopping.rules.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
 import { stockSourceJoins, stockSourceEligible } from "./stock-alerts.dao.js";
 import { createId, uuidToBuffer as id, bufferToUuid as uuid } from "../../core/identifiers/uuid.js";
@@ -72,7 +74,7 @@ function visibility(scope) {
     where.push(`e.store_id = ? AND ((e.entity_type='PRODUCT_QUESTION' AND EXISTS
       (SELECT 1 FROM product_questions q JOIN product_question_answers a ON a.question_id=q.id AND a.tenant_id=q.tenant_id
        WHERE q.id=e.entity_id AND q.tenant_id=n.tenant_id AND q.store_id=e.store_id AND q.customer_id=n.recipient_id
-         AND q.status='APPROVED' AND ${visibleAnswer})) OR (e.entity_type<>'PRODUCT_QUESTION' AND EXISTS (SELECT 1 FROM customer_orders o WHERE o.id = e.order_id
+         AND q.status='APPROVED' AND ${visibleAnswer})) OR (e.entity_type='SHOPPING_ALERT' AND ${shoppingNotificationVisible}) OR (e.entity_type='SHOPPING_REMINDER' AND ${reminderVisible}) OR (e.entity_type NOT IN ('PRODUCT_QUESTION','SHOPPING_ALERT','SHOPPING_REMINDER') AND EXISTS (SELECT 1 FROM customer_orders o WHERE o.id = e.order_id
       AND o.tenant_id = n.tenant_id AND o.store_id = e.store_id AND o.customer_id = n.recipient_id)))`);
     args.push(id(scope.storeId));
   } else if (!scope.unrestricted) {

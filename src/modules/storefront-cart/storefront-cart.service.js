@@ -6,6 +6,10 @@ import { resolveStore, cartOffers } from "../storefront/storefront.dao.js";
 import { digest } from "../customer-accounts/customer-accounts.service.js";
 import * as accounts from "../customer-accounts/customer-accounts.dao.js";
 import * as defaultDao from "./storefront-cart.dao.js";
+import {optional,recordCartAdd} from '../merchandising/merchandising.service.js';
+
+// Only internal, server-created touch IDs survive a merge; browser imports are schema-restricted.
+export function mergeAttribution(quantities,...lists){const touches=new Map();for(const line of lists.flat())if(line.merchTouchId&&(!touches.has(line.offerId)||line.merchTouchId>touches.get(line.offerId)))touches.set(line.offerId,line.merchTouchId);return [...quantities].map(([offerId,quantity])=>({offerId,quantity,...(touches.has(offerId)?{merchTouchId:touches.get(offerId)}:{})}));}
 
 const fail = (code, message, status = 422) => { throw new AppError({ code, message, status }); };
 export function quantityIssue(product, quantity) {
@@ -55,7 +59,7 @@ export function createStorefrontCartService({ dao = defaultDao, accountDao = acc
         const quantities = new Map(cart.items.map((line) => [line.offerId, line.quantity]));
         for (const line of input.legacyItems || []) quantities.set(line.offerId, Number(new Decimal(quantities.get(line.offerId) || 0).plus(line.quantity)));
         if (quantities.size > 50 || [...quantities.values()].some((value) => value > 1000000)) fail("CART_MERGE_LIMIT", "Reduce your bag to 50 items before merging.", 409);
-        cart.items = [...quantities].map(([offerId, quantity]) => ({ offerId, quantity }));
+        cart.items = mergeAttribution(quantities,cart.items);
         cart.legacyImported = true;
         await dao.save({ ...key, ...cart }); cart.revision++;
       }
@@ -65,7 +69,7 @@ export function createStorefrontCartService({ dao = defaultDao, accountDao = acc
           const quantities = new Map(cart.items.map((line) => [line.offerId, line.quantity]));
           for (const line of guest.items) quantities.set(line.offerId, Number(new Decimal(quantities.get(line.offerId) || 0).plus(line.quantity)));
           if (quantities.size > 50 || [...quantities.values()].some((value) => value > 1000000)) fail("CART_MERGE_LIMIT", "The combined bags exceed the bag limit. Sign out and reduce the guest bag before merging.", 409);
-          cart.items = [...quantities].map(([offerId, quantity]) => ({ offerId, quantity }));
+          cart.items = mergeAttribution(quantities,cart.items,guest.items);
           await dao.save({ ...key, ...cart }); cart.revision++;
           await dao.save({ ...guestKey, items: [], legacyImported: true });
           merged = true;
@@ -87,13 +91,15 @@ export function createStorefrontCartService({ dao = defaultDao, accountDao = acc
           const issue = quantityIssue(product, input.quantity);
           if (issue) fail("CART_QUANTITY_INVALID", issue);
           if (!cart.items.some((line) => line.offerId === input.offerId) && cart.items.length >= 50) fail("CART_LIMIT", "A bag can contain up to 50 different items.");
-          cart.items = [...cart.items.filter((line) => line.offerId !== input.offerId), { offerId: input.offerId, quantity: input.quantity }];
+          const previous=cart.items.find(line=>line.offerId===input.offerId);
+          const touch=await optional(()=>recordCartAdd(store,identity.merchToken,{productId:product.id,ownerKey:cartKey,revision:cart.revision,quantity:input.quantity,previousQuantity:previous?.quantity||0},connection));
+          cart.items = [...cart.items.filter((line) => line.offerId !== input.offerId), { offerId: input.offerId, quantity: input.quantity,...(touch||previous?.merchTouchId?{merchTouchId:touch||previous.merchTouchId}:{}) }];
         }
         await dao.save({ ...key, ...cart }); cart.revision++;
       }
       const products = await offers({ scope: store, offerIds: cart.items.map((line) => line.offerId), connection });
       const byId = new Map(products.map((product) => [product.offerId, product]));
-      const items = cart.items.map((line) => {
+      const items = cart.items.map(({merchTouchId,...line}) => {
         const product = byId.get(line.offerId) || null;
         const issue = quantityIssue(product, line.quantity);
         return { ...line, product, issue, lineTotal: product ? Number(new Decimal(product.price).times(line.quantity).toDecimalPlaces(2)) : null };

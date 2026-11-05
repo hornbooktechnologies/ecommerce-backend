@@ -1,4 +1,5 @@
 import {getPrimaryPool} from '../../database/pool-factory.js';
+import {resolve as resolveDefault} from './size-guide-defaults.dao.js';
 import {uuidToBuffer as id,bufferToUuid as uuid} from '../../core/identifiers/uuid.js';
 
 const json = value => typeof value === 'string' ? JSON.parse(value) : value;
@@ -43,10 +44,7 @@ export async function bind({tenantId,productId,guideId,connection}) {
  else await connection.execute(`INSERT INTO product_size_guides (tenant_id,product_id,guide_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE guide_id=VALUES(guide_id),updated_at=UTC_TIMESTAMP(6)`,[id(tenantId),id(productId),id(guideId)]);
 }
 export async function publicGuide({tenantId,productId,connection=getPrimaryPool()}) {
- const [[row]]=await connection.execute(`SELECT g.* FROM product_size_guides pg JOIN size_guides g ON g.id=pg.guide_id AND g.tenant_id=pg.tenant_id AND g.status='ACTIVE' AND g.deleted_at IS NULL
-  JOIN products p ON p.id=pg.product_id AND p.tenant_id=pg.tenant_id AND p.publication_status='PUBLISHED' AND p.approval_status='APPROVED' AND p.deleted_at IS NULL
-  JOIN product_types pt ON pt.id=p.product_type_id AND pt.tenant_id=p.tenant_id AND pt.vertical='CLOTHING'
-  WHERE pg.tenant_id=? AND pg.product_id=?`,[id(tenantId),id(productId)]);
- if(!row) return null;
- const guide=map(row); const {status,usageCount,...safe}=guide; return safe;
+ const resolved=await resolveDefault({tenantId,productId,connection,publicOnly:true});if(!resolved.guideId)return null;
+ const guide=await find({tenantId,guideId:resolved.guideId,connection});if(!guide||guide.status!=='ACTIVE')return null;
+ const {status,usageCount,...safe}=guide; return safe;
 }

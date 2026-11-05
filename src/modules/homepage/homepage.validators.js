@@ -2,7 +2,7 @@ import Joi from "joi";
 
 const text = (max) => Joi.string().trim().max(max).allow("").required();
 // Only implemented, same-store destinations. Never accept protocol-relative or script URLs.
-export const destination = Joi.string().pattern(/^\/(?:|p\/[a-zA-Z0-9_-]{1,320}|c\/[a-zA-Z0-9_-]{1,260})$/).required();
+export const destination = Joi.string().pattern(/^\/(?:|products|collections\/[a-z0-9]+(?:-[a-z0-9]+)*|p\/[a-zA-Z0-9_-]{1,320}|c\/[a-zA-Z0-9_-]{1,260})$/).max(325).required();
 export const heroDocumentSchema = Joi.object({
   enabled: Joi.boolean().required(),
   autoplay: Joi.boolean().required(),

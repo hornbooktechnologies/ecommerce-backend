@@ -1,9 +1,11 @@
 import cors from "cors";
+import {createShoppingAdminRouter} from './modules/shopping/shopping.routes.js';
 import express from "express";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { env } from "./config/env.js";
 import { resolveAppearance } from './config/appearance/appearance.js';
+import {createLocalizationRouter} from './modules/localization/localization.routes.js';
 import { logger } from "./config/logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFound } from "./middleware/not-found.js";
@@ -18,6 +20,7 @@ import { createCatalogRouter } from "./modules/catalog/catalog.routes.js";
 import { createInventoryRouter } from "./modules/inventory/inventory.routes.js";
 import { createOrdersRouter } from "./modules/orders/orders.routes.js";
 import { createReturnsRouter } from "./modules/returns/returns.routes.js";
+import {createCodCollectionsRouter} from './modules/payments/cod-collections.routes.js';
 import { createVendorsRouter } from "./modules/vendors/vendors.routes.js";
 import { createVendorPortalRouter } from "./modules/vendor-portal/vendor-portal.routes.js";
 import { createStoreOperationsRouter } from "./modules/store-operations/store-operations.routes.js";
@@ -140,6 +143,7 @@ export function createApp({
     res.set('Cache-Control', 'no-store').json({ data: resolveAppearance('admin') });
   });
   app.use("/api/platform/v1/dashboard", createPlatformDashboardRouter({ service: platformDashboardService }));
+  app.use('/api/admin/v1',createLocalizationRouter());
   app.use("/api/admin/v1/notifications", createInboxRouter({ audience: "ADMIN", service: inboxService, resolveTenant: tenantAccessResolver }));
   app.use("/api/vendor/v1/notifications", createInboxRouter({ audience: "VENDOR", service: inboxService, resolveVendor: vendorAccessResolver }));
   app.use("/api/platform/v1/notifications", createInboxRouter({ audience: "PLATFORM", service: inboxService }));
@@ -152,12 +156,14 @@ export function createApp({
   app.use("/api/storefront/v1", createStorefrontCartRouter({ service: storefrontCartService }));
   app.use("/api/storefront/v1", createStorefrontWishlistRouter({ service: storefrontWishlistService }));
   app.use("/api/storefront/v1", createStorefrontCheckoutRouter({ service: storefrontCheckoutService }));
+  app.use("/api/admin/v1/shopping-alerts",createShoppingAdminRouter());
   app.use("/api/admin/v1/auth", createAuthRouter({ authenticationService }));
   app.use("/api/admin/v1", createAdminNewsletterRouter({ service: newsletterService,
     resolveTenant: tenantAccessResolver, authorize: tenantPermissionAuthorization }));
   app.use("/api/admin/v1", createAdminStoreContentRouter({ service: storeContentService,
     resolveTenant: tenantAccessResolver, authorize: tenantPermissionAuthorization }));
   app.use("/api/admin/v1", createPaymentsRouter({ service: paymentsService, resolveTenant: tenantAccessResolver }));
+  app.use('/api/admin/v1',createCodCollectionsRouter({resolveTenant:tenantAccessResolver,authorize:tenantPermissionAuthorization}));
   app.use("/api/admin/v1", createHomepageRouter({ service: homepageService, sectionsService: homepageSectionsService,
     resolveTenant: tenantAccessResolver, authorize: tenantPermissionAuthorization }));
   app.use("/api/platform/v1/tenants", createPlatformTenantRouter({

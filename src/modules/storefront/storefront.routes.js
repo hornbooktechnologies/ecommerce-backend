@@ -1,4 +1,13 @@
+import {specificationQuery} from './specification-filters.validators.js';
+import {createMerchandisingPublicRouter} from '../merchandising/merchandising.routes.js';
+import {publicCollection,publicCollectionIndex} from '../homepage/collections.service.js';
+import {collectionSlug,collectionProducts} from '../homepage/collections.validators.js';
 import { Router } from "express";
+import {publicProfile as sellerProfile,publicRatings as sellerRatings} from '../seller-profiles/seller-profiles.service.js';
+import {uuid as sellerIdSchema,publicQuery as sellerQuery} from '../seller-profiles/seller-profiles.validators.js';
+import {discovery as discover} from '../shopping/shopping.service.js';
+import {discovery as discoverySchema} from '../shopping/shopping.validators.js';
+import {resolveStore} from './storefront.dao.js';
 import {publicFile as reviewPhoto} from '../review-photos/review-photos.service.js';
 import {uuid as photoIdSchema,validate as validatePhoto,sendPhoto} from '../review-photos/review-photos.validators.js';
 import Joi from "joi";
@@ -19,7 +28,7 @@ const optionIds = Joi.string().max(1200).allow("").default("").custom((raw, help
 const filtersSchema = Joi.object({
   search: Joi.string().trim().max(190).allow("").default(""),
   category: Joi.string().max(260).allow("").default(""), brand: Joi.string().guid().allow("").default(""),
-  brands: optionIds, colors: optionIds, sizes: optionIds,
+  brands: optionIds, colors: optionIds, sizes: optionIds, specs: specificationQuery,
   page: Joi.number().integer().min(1).max(10000).default(1),
   pageSize: Joi.number().integer().min(1).max(100).default(10),
   minPrice: Joi.number().min(0).max(1e12), maxPrice: Joi.number().min(0).max(1e12),
@@ -36,10 +45,14 @@ function validate(schema, input, message = "Invalid catalog filters.") {
 }
 export function createStorefrontRouter({ service = createStorefrontService() } = {}) {
   const router = Router(); const base = "/:tenantCode/stores/:storeCode";
+  router.use(createMerchandisingPublicRouter());
   router.use(base, (req, res, next) => {
     validate(scopeSchema, req.params);
     res.set("Cache-Control", "no-store"); next();
   });
+  router.post(`${base}/discovery`,async(req,res)=>{const input=validate(discoverySchema,req.body);const scope=await resolveStore(req.params);if(!scope)throw new AppError({code:'STORE_NOT_FOUND',message:'This store is unavailable.',status:404});res.json({data:await discover(scope,input)});});
+  router.get(`${base}/sellers/:sellerId`,async(req,res)=>res.json({data:await sellerProfile(req.params,validate(sellerIdSchema,req.params.sellerId),validate(sellerQuery,req.query))}));
+  router.get(`${base}/sellers/:sellerId/ratings`,async(req,res)=>res.json({data:await sellerRatings(req.params,validate(sellerIdSchema,req.params.sellerId),req.query)}));
   router.get(`${base}/config`, async (req, res) => res.json({ data: await service.configuration(req.params) }));
   router.get(`${base}/review-photos/:photoId`,async(req,res)=>sendPhoto(res,await reviewPhoto(req.params,validatePhoto(photoIdSchema,req.params.photoId))));
   router.get(`${base}/delivery-availability`, async (req, res) => {
@@ -47,6 +60,8 @@ export function createStorefrontRouter({ service = createStorefrontService() } =
     res.json({ data: await service.deliveryAvailability(req.params, input) });
   });
   router.get(`${base}/categories`, async (req, res) => res.json({ data: (await service.configuration(req.params)).categories }));
+  router.get(`${base}/collections`,async(req,res)=>{const scope=await resolveStore(req.params);if(!scope)throw new AppError({code:'STORE_NOT_FOUND',message:'Store is unavailable.',status:404});res.json({data:await publicCollectionIndex(scope,validate(Joi.object({page:Joi.number().integer().min(1).max(10000).default(1),pageSize:Joi.number().integer().min(1).max(100).default(10)}),req.query))});});
+  router.get(`${base}/collections/:collectionSlug`,async(req,res)=>{const scope=await resolveStore(req.params);if(!scope)throw new AppError({code:'STORE_NOT_FOUND',message:'Store is unavailable.',status:404});res.json({data:await publicCollection(scope,validate(collectionSlug.required(),req.params.collectionSlug),validate(collectionProducts,req.query))});});
   router.get(`${base}/brands`, async (req, res) => res.json({ data: (await service.configuration(req.params)).brands }));
   router.get(`${base}/products`, async (req, res) => res.json({ data: await service.catalog(req.params, validate(filtersSchema, req.query)) }));
   router.get(`${base}/facets`, async (req, res) => res.json({ data: await service.facets(req.params, validate(filtersSchema, req.query)) }));

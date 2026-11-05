@@ -88,6 +88,13 @@ export function createPaymentsService({ dao = defaultDao, transaction = withTran
       await dao.attach({ ...scope, order, method, accountId: settings.accountId, amountMinor: method === "ONLINE_TEST" ? minorAmount(order.grandTotal) : 0 });
     },
     async read(scope, receipt, { refresh = false } = {}) {
+      if(receipt.paymentMethod==='COD'){
+        const current=await dao.codReceiptStatus({...scope,orderId:receipt.id});
+        if(!current)fail('PAYMENT_NOT_FOUND','This COD order is unavailable.',404);
+        return {...receipt,...current,message:current.paymentStatus==='PAID'
+          ? 'The store recorded full COD collection. No online charge was made.'
+          : `COD payment status: ${current.paymentStatus.toLowerCase().replaceAll('_',' ')}. Check order tracking for collection or refund updates. No online payment was collected here.`};
+      }
       if (receipt.paymentMethod !== "ONLINE_TEST") return receipt;
       const attempt = await dao.attempt({ ...scope, orderId: receipt.id });
       if (!attempt) fail("PAYMENT_NOT_FOUND", "Payment attempt not found.", 404);

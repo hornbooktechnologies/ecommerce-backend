@@ -1,3 +1,4 @@
+import {validateSpecificationFilters} from './specification-filters.dao.js';
 import { AppError } from "../../core/errors/app-error.js";
 import * as defaultDao from "./storefront.dao.js";
 import { listProductMediaDetails, listProductCustomFields } from "../catalog/catalog.dao.js";
@@ -7,9 +8,10 @@ import { checkDeliveryAvailability } from "./delivery-availability.service.js";
 import { publicGuide } from "../size-guides/size-guides.dao.js";
 import { publicSpecifications } from '../specifications/specifications.service.js';
 import { resolveAppearance } from '../../config/appearance/appearance.js';
+import {storefrontSettings} from '../localization/localization.service.js';
 
 export function createStorefrontService({ dao = defaultDao, media = listProductMediaDetails,
-  customFields = listProductCustomFields, hero = publicHero, sections = publicSections, delivery = checkDeliveryAvailability, guide = publicGuide, specs = publicSpecifications } = {}) {
+  customFields = listProductCustomFields, hero = publicHero, sections = publicSections, delivery = checkDeliveryAvailability, guide = publicGuide, specs = publicSpecifications, localization = storefrontSettings } = {}) {
   async function resolve(input) {
     const scope = await dao.resolveStore(input);
     if (!scope) throw new AppError({ code: "STOREFRONT_NOT_FOUND", message: "This store is unavailable.", status: 404 });
@@ -17,7 +19,7 @@ export function createStorefrontService({ dao = defaultDao, media = listProductM
   }
   return {
     async deliveryAvailability(input, { postalCode }) { return delivery({ ...await resolve(input), postalCode }); },
-    async catalog(input, filters) { const scope = await resolve(input); return dao.listProducts({ scope, filters }); },
+    async catalog(input, filters) { const scope = await resolve(input); await validateSpecificationFilters({scope,filters}); return dao.listProducts({ scope, filters }); },
     async facets(input, filters) { const scope = await resolve(input); return dao.listDiscoveryFacets({ scope, filters }); },
     async comparison(input, selections) {
       const scope = await resolve(input);
@@ -41,9 +43,9 @@ export function createStorefrontService({ dao = defaultDao, media = listProductM
     },
     async configuration(input) {
       const scope = await resolve(input);
-      const [facets, homepageHero, homepageSections] = await Promise.all([dao.listFacets({ scope }), hero(scope), sections(scope)]);
+      const [facets, homepageHero, homepageSections, localizationSettings] = await Promise.all([dao.listFacets({ scope }), hero(scope), sections(scope), localization(scope)]);
       return { store: { name: scope.name, tenantName: scope.tenantName, code: scope.code, currency: scope.currency }, ...facets, hero: homepageHero, homepageSections,
-        appearance: resolveAppearance('storefront', scope.tenantId, scope.storeId) };
+        localization:localizationSettings, appearance: resolveAppearance('storefront', scope.tenantId, scope.storeId) };
     },
     async detail(input, slug) {
       const scope = await resolve(input); const product = await dao.findProduct({ scope, slug });

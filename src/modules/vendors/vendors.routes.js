@@ -1,4 +1,7 @@
 import { raw, Router } from "express";
+import * as sellerProfiles from '../seller-profiles/seller-profiles.service.js';
+import {params as sellerProfileParams,update as sellerProfileUpdate} from '../seller-profiles/seller-profiles.validators.js';
+import {validate as sellerProfileValidate} from '../customer-accounts/customer-accounts.validators.js';
 import { authenticate } from "../auth/auth.middleware.js";
 import { requirePermission, resolveTenantAccess } from "../access-control/access-control.middleware.js";
 import * as defaultService from "./vendors.service.js";
@@ -13,6 +16,9 @@ export function createVendorsRouter({ vendorsService = defaultService, resolveTe
   const router = Router();
   const controller = createVendorsController(vendorsService);
   router.use(authenticate, resolveTenant);
+  const sellerArgs=req=>{const input=sellerProfileValidate(sellerProfileParams,req.params);return {tenantId:req.context.tenant.tenantId,merchantId:input.vendorId,storeId:input.storeId};};
+  router.get('/vendors/:vendorId/stores/:storeId/public-profile',authorize('vendor.read'),async(req,res)=>{res.set('Cache-Control','no-store');res.json({data:await sellerProfiles.readAdmin(sellerArgs(req))});});
+  router.put('/vendors/:vendorId/stores/:storeId/public-profile',authorize('vendor.read'),authorize('vendor.manage'),async(req,res)=>{res.set('Cache-Control','no-store');res.json({data:await sellerProfiles.updateAdmin(sellerArgs(req),sellerProfileValidate(sellerProfileUpdate,req.body),{actorUserId:req.context.actor.userId,requestId:req.context.requestId,ipAddress:req.ip,userAgent:req.get('user-agent')||null})});});
   router.get("/vendors/options", authorize("vendor.manage"), validateQuery(vendorOptionsSchema), controller.options);
   router.get("/vendors", authorize("vendor.read"), validateQuery(listVendorsSchema), controller.list);
   router.post("/vendors", authorize("vendor.manage"), validateBody(createVendorSchema), controller.create);

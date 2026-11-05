@@ -28,7 +28,7 @@ export function createStorefrontCheckoutRouter({ service = createStorefrontCheck
       await service.limit(store, req.ip);
       const token = req.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1] || "";
       const data = await service[operation](store, token, input, { requestId: req.context?.requestId,
-        ipAddress: req.ip, userAgent: req.get("user-agent") || "Storefront" });
+        ipAddress: req.ip, userAgent: req.get("user-agent") || "Storefront",merchToken:req.get('sec-gpc')==='1'||req.get('dnt')==='1'?'':req.get('x-merchandising-token')||'' });
       res.json({ data });
     });
   }

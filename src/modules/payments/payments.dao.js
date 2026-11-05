@@ -65,6 +65,12 @@ export async function attempt({ tenantId, storeId, customerId, orderId, connecti
 export async function saveGatewayOrder({ tenantId, attemptId, gatewayOrderId, connection }) {
   await connection.execute("UPDATE storefront_payment_attempts SET gateway_order_id = ? WHERE tenant_id = ? AND id = ? AND gateway_order_id IS NULL", [gatewayOrderId, id(tenantId), id(attemptId)]);
 }
+export async function codReceiptStatus({tenantId,storeId,customerId,orderId,connection}) {
+  const [[row]]=await connection.execute(`SELECT status,payment_status FROM customer_orders
+    WHERE tenant_id=? AND store_id=? AND customer_id=? AND id=? AND payment_method='COD'`,
+    [id(tenantId),id(storeId),id(customerId),id(orderId)]);
+  return row?{status:row.status,paymentStatus:row.payment_status}:null;
+}
 export async function captured({ tenantId, attempt, payment, connection }) {
   const [updated] = await connection.execute("UPDATE storefront_payment_attempts SET captured_payment_id = ? WHERE tenant_id = ? AND id = ? AND captured_payment_id IS NULL", [payment.id, id(tenantId), id(attempt.id)]);
   if (!updated.affectedRows) paymentError("PAYMENT_CAPTURE_CONFLICT", "This payment has already been recorded. Refresh its status.");
