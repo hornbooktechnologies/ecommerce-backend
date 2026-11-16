@@ -33,7 +33,7 @@ function fail(code, message, status = 422, field = null) {
     details: field ? [{ field, code: code.toLowerCase(), message }] : [] });
 }
 
-function calculateIncludedTax(offer, quantity, grossAmount) {
+export function calculateIncludedTax(offer, quantity, grossAmount) {
   const intraState = isIntraStateSupply(offer.registrationStateCode, offer.destinationStateCode);
   const cgstRate = intraState ? new Decimal(offer.cgstRate || 0) : new Decimal(0);
   const sgstRate = intraState ? new Decimal(offer.sgstRate || 0) : new Decimal(0);
@@ -66,6 +66,10 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
     }
     const resolved = [];
     for (const row of rows) {
+      if (row.componentEligible === false) {
+        fail("BUNDLE_COMPONENT_UNAVAILABLE",
+          "A required bundle component is inactive or unavailable. Update the bundle before ordering.", 409);
+      }
       const quantity = multiplier.times(row.quantity);
       if (row.productKind === "BUNDLE") {
         resolved.push(...await resolveBundleComponents({ tenantId,
@@ -439,7 +443,7 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
         if (!balance) fail("FULFILLMENT_STOCK_MISSING",
           `${item.productName} has no stock in ${warehouse.name}.`, 409, "warehouseId");
         const available = new Decimal(balance.onHandQuantity).minus(balance.reservedQuantity)
-          .minus(balance.quarantineQuantity);
+          .minus(balance.quarantineQuantity).minus(balance.safetyStockQuantity || 0);
         const requested = new Decimal(item.quantity);
         if (available.lessThan(requested)) {
           fail("FULFILLMENT_STOCK_SHORTAGE",
@@ -543,6 +547,8 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
           "Reserved stock could not be found for this fulfilment.", 409);
         const serials = await dao.listFulfillmentSerials({ fulfillmentId, connection });
         for (const stock of stocks) {
+          if (stock.lotEligible === false) fail('FULFILLMENT_LOT_UNAVAILABLE',
+            'A reserved batch is inactive or expired. Do not dispatch it; review the allocation first.',409);
           await dao.consumeFulfillmentStock({ stock: { ...stock, ledgerId: createId() },
             tenantId, fulfillmentId, actorUserId: context.actorUserId, connection });
           for (const serial of serials.filter((entry) => entry.fulfillmentItemId === stock.fulfillmentItemId)) {

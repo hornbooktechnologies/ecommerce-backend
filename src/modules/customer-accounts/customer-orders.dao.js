@@ -52,7 +52,7 @@ export async function readOrder(args) {
   // Whitelist customer-facing columns. Never return internal notes, staff identities,
   // supplier information, warehouse details, or merchant payable amounts.
   const [items] = await connection.execute(`SELECT i.id, i.product_name, i.variant_name, i.sku, i.quantity,
-    i.unit_price, i.line_total, i.status, m.display_name AS seller,
+    i.unit_price, i.line_total, i.status, i.product_snapshot, m.display_name AS seller,
     (o.status NOT IN ('DRAFT', 'CANCELLED') AND i.status <> 'CANCELLED' AND ${deliveredItemSql}
       AND EXISTS (SELECT 1 FROM product_variants pv JOIN products p ON p.id = pv.product_id AND p.tenant_id = pv.tenant_id
         WHERE pv.id = i.variant_id AND pv.tenant_id = i.tenant_id AND p.deleted_at IS NULL)) AS review_eligible,
@@ -85,6 +85,13 @@ export async function readOrder(args) {
     address: Object.fromEntries(["contactName", "line1", "line2", "landmark", "city", "stateName", "postalCode", "countryCode"].map((key) => [key, address[key] || ""])),
     items: items.map((item) => ({ id: bufferToUuid(item.id), productName: item.product_name, variantName: item.variant_name,
       sku: item.sku, quantity: Number(item.quantity), unitPrice: Number(item.unit_price), lineTotal: Number(item.line_total), status: item.status, seller: item.seller,
+      substitution: json(item.product_snapshot).substitution?.original ? {
+        originalProductName: json(item.product_snapshot).substitution.original.productName,
+        originalVariantName: json(item.product_snapshot).substitution.original.variantName,
+        originalSku: json(item.product_snapshot).substitution.original.sku,
+        originalLineTotal: json(item.product_snapshot).substitution.original.lineTotal,
+        at: json(item.product_snapshot).substitution.at
+      } : null,
       reviewEligible: Boolean(item.review_eligible), review: item.review_id ? { id: bufferToUuid(item.review_id), status: item.review_status } : null })),
     history: history.map((entry) => ({ id: bufferToUuid(entry.id), type: entry.status_type, status: entry.new_status, at: iso(entry.changed_at) })),
     fulfillments: fulfillments.map((entry) => ({ id: bufferToUuid(entry.id), shipmentId: bufferToUuid(entry.shipment_id), status: entry.status, seller: entry.seller,

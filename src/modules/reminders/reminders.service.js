@@ -25,7 +25,7 @@ export async function checkCandidate(candidate){return withTransaction(candidate
  const codes=await dao.scope(a);if(!codes||!await dao.due(a)||!await shoppingEnabled(a))return false;
  const source=await dao.source(a);if(!source?.items?.length||!source.sourceDue||!source.noPurchase||source.revision===pref.lastSourceRevision)return false;
  const scope=await resolveStore({...codes,connection});if(!scope)return false;
- let eligible=false;
+ let eligible;
  if(pref.kind==='CART'){const offers=await cartOffers({scope,offerIds:source.items.map(item=>item.offerId),connection});eligible=source.items.some(item=>{const offer=offers.find(row=>row.offerId===item.offerId);return offer&&!quantityIssue(offer,item.quantity);});}
  else {const products=await wishlistProducts({scope,productIds:source.items,connection});const offers=await cartOffers({scope,offerIds:products.map(product=>product.offerId),connection});eligible=offers.some(offer=>!quantityIssue(offer,offer.minimumOrderQuantity));}
  if(!eligible)return false;const eventId=createId();await dao.trigger({...a,eventId,source});

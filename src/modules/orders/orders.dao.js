@@ -253,16 +253,20 @@ export async function listRequiredBundleComponents({ tenantId, bundleVariantId, 
   const [rows] = await connection.execute(
     `SELECT pbc.id, pbc.component_variant_id, pbc.quantity, pbc.sort_order,
             cp.name AS product_name, cp.product_kind, cv.name AS variant_name, cv.sku,
+            (cv.id IS NOT NULL AND cp.id IS NOT NULL AND cpt.id IS NOT NULL
+              AND component_vertical.vertical IS NOT NULL) AS component_eligible,
             cpt.lot_tracking_enabled, cpt.serial_tracking_enabled,
             cpt.expiry_tracking_enabled, cv.warranty_months, cv.warranty_type,
             cso.id AS component_offer_id,
             COALESCE((SELECT SUM(ib.on_hand_quantity - ib.reserved_quantity - ib.quarantine_quantity)
               FROM inventory_balances ib WHERE ib.offer_id = cso.id), 0) AS available_quantity
        FROM product_bundle_components pbc
-       JOIN product_variants cv ON cv.id = pbc.component_variant_id
+       LEFT JOIN product_variants cv ON cv.id = pbc.component_variant_id AND cv.tenant_id = pbc.tenant_id
         AND cv.status = 'ACTIVE' AND cv.deleted_at IS NULL
-       JOIN products cp ON cp.id = cv.product_id AND cp.deleted_at IS NULL
-       JOIN product_types cpt ON cpt.id = cp.product_type_id AND cpt.deleted_at IS NULL
+       LEFT JOIN products cp ON cp.id = cv.product_id AND cp.tenant_id = pbc.tenant_id AND cp.deleted_at IS NULL
+       LEFT JOIN product_types cpt ON cpt.id = cp.product_type_id AND cpt.tenant_id = pbc.tenant_id AND cpt.deleted_at IS NULL
+       LEFT JOIN tenant_product_verticals component_vertical ON component_vertical.tenant_id = pbc.tenant_id
+         AND component_vertical.vertical = cpt.vertical AND component_vertical.status = 'ACTIVE'
        LEFT JOIN seller_offers cso ON cso.id = (
          SELECT candidate.id FROM seller_offers candidate
           WHERE candidate.tenant_id = pbc.tenant_id
@@ -280,6 +284,7 @@ export async function listRequiredBundleComponents({ tenantId, bundleVariantId, 
     componentVariantId: bufferToUuid(row.component_variant_id), quantity: number(row.quantity),
     sortOrder: Number(row.sort_order), productName: row.product_name,
     productKind: row.product_kind, variantName: row.variant_name, sku: row.sku,
+    componentEligible: Boolean(row.component_eligible),
     offerId: row.component_offer_id ? bufferToUuid(row.component_offer_id) : null,
     availableQuantity: number(row.available_quantity) || 0,
     lotTracking: Boolean(row.lot_tracking_enabled), serialTracking: Boolean(row.serial_tracking_enabled),
@@ -894,6 +899,7 @@ export async function getFulfillmentOptions({ tenantId, orderId, connection = ge
           AND (w.store_id IS NULL OR w.store_id = co.store_id)
          JOIN inventory_balances ib ON ib.warehouse_id = w.id AND ib.offer_id = sl.offer_id
          JOIN inventory_lots il ON il.inventory_balance_id = ib.id AND il.status = 'ACTIVE'
+           AND (il.expires_at IS NULL OR il.expires_at >= UTC_DATE())
         WHERE oi.tenant_id = ? AND oi.customer_order_id = ?
           AND il.on_hand_quantity > il.reserved_quantity + il.quarantine_quantity
         ORDER BY il.expires_at IS NULL, il.expires_at, il.received_at`, [tenant, order]),
@@ -1037,18 +1043,20 @@ export async function findWarehouseForFulfillment({ tenantId, warehouseId, merch
 
 export async function findBalanceForFulfillment({ tenantId, warehouseId, offerId, connection }) {
   const [rows] = await connection.execute(
-    `SELECT id, on_hand_quantity, reserved_quantity, quarantine_quantity
+    `SELECT id, on_hand_quantity, reserved_quantity, quarantine_quantity, safety_stock_quantity
        FROM inventory_balances WHERE tenant_id = ? AND warehouse_id = ? AND offer_id = ?
        LIMIT 1 FOR UPDATE`, [uuidToBuffer(tenantId), uuidToBuffer(warehouseId), uuidToBuffer(offerId)]
   );
   return rows[0] ? { id: bufferToUuid(rows[0].id), onHandQuantity: number(rows[0].on_hand_quantity),
-    reservedQuantity: number(rows[0].reserved_quantity), quarantineQuantity: number(rows[0].quarantine_quantity) } : null;
+    reservedQuantity: number(rows[0].reserved_quantity), quarantineQuantity: number(rows[0].quarantine_quantity),
+    safetyStockQuantity: number(rows[0].safety_stock_quantity) || 0 } : null;
 }
 
 export async function listLotsForFulfillment({ tenantId, balanceId, connection }) {
   const [rows] = await connection.execute(
     `SELECT id, lot_number, expires_at, on_hand_quantity, reserved_quantity, quarantine_quantity
        FROM inventory_lots WHERE tenant_id = ? AND inventory_balance_id = ? AND status = 'ACTIVE'
+         AND (expires_at IS NULL OR expires_at >= UTC_DATE())
        ORDER BY expires_at IS NULL, expires_at, received_at FOR UPDATE`,
     [uuidToBuffer(tenantId), uuidToBuffer(balanceId)]
   );
@@ -1162,11 +1170,14 @@ export async function listFulfillmentStock({ tenantId, fulfillmentId, connection
             COALESCE(oibc.component_offer_id, oi.offer_id) AS offer_id,
             COALESCE(oibc.component_variant_id, oi.variant_id) AS variant_id,
             pv.warranty_months,
-            pv.warranty_type, ib.id AS balance_id, sr.id AS reservation_id
+            pv.warranty_type, ib.id AS balance_id, sr.id AS reservation_id,
+            (fi.inventory_lot_id IS NULL OR (il.id IS NOT NULL AND il.status='ACTIVE'
+              AND (il.expires_at IS NULL OR il.expires_at>=UTC_DATE()))) AS lot_eligible
        FROM fulfillment_items fi JOIN order_items oi ON oi.id = fi.order_item_id
        LEFT JOIN order_item_bundle_components oibc ON oibc.id = fi.bundle_component_id
        JOIN product_variants pv ON pv.id = COALESCE(oibc.component_variant_id, oi.variant_id)
        JOIN fulfillments f ON f.id = fi.fulfillment_id
+       LEFT JOIN inventory_lots il ON il.id=fi.inventory_lot_id AND il.tenant_id=f.tenant_id
        JOIN inventory_balances ib ON ib.warehouse_id = f.warehouse_id
         AND ib.offer_id = COALESCE(oibc.component_offer_id, oi.offer_id)
        JOIN stock_reservations sr ON sr.reference_type = 'FULFILLMENT'
@@ -1180,7 +1191,7 @@ export async function listFulfillmentStock({ tenantId, fulfillmentId, connection
     bundleComponentId: row.bundle_component_id ? bufferToUuid(row.bundle_component_id) : null,
     quantity: number(row.requested_quantity), balanceId: bufferToUuid(row.balance_id),
     reservationId: bufferToUuid(row.reservation_id), warrantyMonths: row.warranty_months === null ? null : Number(row.warranty_months),
-    warrantyType: row.warranty_type }));
+    warrantyType: row.warranty_type, lotEligible: Boolean(row.lot_eligible) }));
 }
 
 export async function listFulfillmentSerials({ fulfillmentId, connection }) {

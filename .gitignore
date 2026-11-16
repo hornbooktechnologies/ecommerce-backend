@@ -57,3 +57,4 @@ package-lock.json
 !src/database/migrations/055_merchandising_analytics.sql
 !src/database/migrations/056_cod_collections.sql
 !src/database/migrations/057_store_localization.sql
+!src/database/migrations/058_order_substitutions.sql

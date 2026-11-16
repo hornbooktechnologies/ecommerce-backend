@@ -37,7 +37,7 @@ test("rating directory normalizes tenant-scoped filters", async () => {
     .set("authorization", `Bearer ${token}`);
   assert.equal(response.status, 200);
   assert.deepEqual(received, { tenantId, filters: { search: "Bottle", status: "PUBLISHED", rating: 5,
-    productId, page: 2, pageSize: 10 } });
+    productId, page: 2, pageSize: 10, hasPendingPhotos: false } });
 });
 
 test("rating moderation normalizes status and notes", async () => {

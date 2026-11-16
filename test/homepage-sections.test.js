@@ -37,7 +37,10 @@ test("manual order, limit and current visibility survive publication; drafts nev
   const document = defaultSections();
   document.sections.forEach((section) => { section.enabled = false; });
   document.sections[0] = { ...document.sections[0], enabled: true, rule: "MANUAL", productSlugs: ["second", "hidden", "first"], limit: 2 };
-  const catalogDao = { findProduct: async ({ slug }) => slug === "hidden" ? null : { id: slug, price: 123 } };
+  const catalogDao = { listProducts: async (input) => {
+    assert.deepEqual(input.scope,scope);assert.deepEqual(input.filters.productSlugs,["second","hidden","first"]);
+    return {items:[{id:"first",slug:"first",price:123},{id:"second",slug:"second",price:123}]};
+  } };
   assert.equal(await publicSections(scope, { dao: { read: async () => ({ draft: document, published: null }) } }), null);
   const result = await publicSections(scope, { dao: { read: async () => ({ published: document }) }, catalogDao });
   assert.deepEqual(result.sections[0].items.map((product) => product.id), ["second", "first"]);

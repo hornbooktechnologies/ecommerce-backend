@@ -508,8 +508,8 @@ export async function insertRefund({ refund, items, connection }) {
     );
   }
   await connection.execute(
-    `UPDATE customer_orders SET refunded_total = refunded_total + ?,
-       payment_status = CASE WHEN refunded_total + ? >= grand_total THEN 'REFUNDED' ELSE 'PARTIALLY_REFUNDED' END,
+    `UPDATE customer_orders SET payment_status = CASE WHEN refunded_total + ? >= grand_total THEN 'REFUNDED' ELSE 'PARTIALLY_REFUNDED' END,
+       refunded_total = refunded_total + ?,
        version = version + 1 WHERE tenant_id = ? AND id = ?`,
     [refund.amount, refund.amount, uuidToBuffer(refund.tenantId), uuidToBuffer(refund.orderId)]
   );

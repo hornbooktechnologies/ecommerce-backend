@@ -1,4 +1,5 @@
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import {businessCustomer} from '../../database/policies/business-orders.js';
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 
 const number = (value) => value === null || value === undefined ? 0 : Number(value);
@@ -9,12 +10,12 @@ export async function getDashboardOverview({ tenantId, connection = getPrimaryPo
   const [metricResult, trendResult, mixResult, queueResult, activityResult] = await Promise.all([
     connection.execute(
       `SELECT
-        (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ?
+        (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
           AND co.created_at >= UTC_DATE() AND co.status <> 'DRAFT') AS orders_today,
-        (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ?
+        (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
           AND co.created_at >= DATE_SUB(UTC_DATE(), INTERVAL 1 DAY) AND co.created_at < UTC_DATE()
           AND co.status <> 'DRAFT') AS orders_yesterday,
-        (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ?
+        (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
           AND co.status NOT IN ('DRAFT','CANCELLED','COMPLETED')
           AND co.fulfillment_status IN ('UNFULFILLED','PARTIALLY_FULFILLED')) AS awaiting_fulfillment,
         (SELECT COUNT(*) FROM inventory_balances ib WHERE ib.tenant_id = ?
@@ -22,8 +23,8 @@ export async function getDashboardOverview({ tenantId, connection = getPrimaryPo
           AND (ib.on_hand_quantity - ib.reserved_quantity - ib.quarantine_quantity) <= ib.reorder_point_quantity) AS low_stock,
         (SELECT COUNT(*) FROM merchants m WHERE m.tenant_id = ? AND m.merchant_type = 'MARKETPLACE'
           AND m.status = 'PENDING' AND m.deleted_at IS NULL) AS pending_vendors,
-        (SELECT COUNT(*) FROM return_requests rr WHERE rr.tenant_id = ? AND rr.status = 'REQUESTED') AS pending_returns,
-        (SELECT COALESCE(SUM(co.grand_total), 0) FROM customer_orders co WHERE co.tenant_id = ?
+        (SELECT COUNT(*) FROM return_requests rr JOIN customer_orders co ON co.tenant_id=rr.tenant_id AND co.id=rr.customer_order_id WHERE rr.tenant_id = ? AND ${businessCustomer()} AND rr.status = 'REQUESTED') AS pending_returns,
+        (SELECT COALESCE(SUM(co.grand_total), 0) FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
           AND co.created_at >= DATE_SUB(UTC_DATE(), INTERVAL 29 DAY)
           AND co.status NOT IN ('DRAFT','CANCELLED')) AS revenue_30d`,
       [tenant, tenant, tenant, tenant, tenant, tenant, tenant]
@@ -41,19 +42,19 @@ export async function getDashboardOverview({ tenantId, connection = getPrimaryPo
            SELECT DATE_SUB(UTC_DATE(), INTERVAL 1 DAY) UNION ALL
            SELECT UTC_DATE()
          ) calendar
-         LEFT JOIN customer_orders co ON co.tenant_id = ? AND DATE(co.created_at) = calendar.day AND co.status <> 'DRAFT'
+         LEFT JOIN customer_orders co ON co.tenant_id = ? AND DATE(co.created_at) = calendar.day AND co.status <> 'DRAFT' AND ${businessCustomer()}
         GROUP BY calendar.day ORDER BY calendar.day`, [tenant]
     ),
     connection.execute(
       `SELECT status_group, COUNT(*) AS total FROM (
          SELECT CASE
-           WHEN status = 'PLACED' THEN 'New'
-           WHEN status IN ('CONFIRMED','PROCESSING') THEN 'Processing'
-           WHEN status = 'COMPLETED' THEN 'Completed'
-           WHEN status = 'CANCELLED' THEN 'Cancelled'
+           WHEN co.status = 'PLACED' THEN 'New'
+           WHEN co.status IN ('CONFIRMED','PROCESSING') THEN 'Processing'
+           WHEN co.status = 'COMPLETED' THEN 'Completed'
+           WHEN co.status = 'CANCELLED' THEN 'Cancelled'
            ELSE 'Draft'
          END AS status_group
-         FROM customer_orders WHERE tenant_id = ?
+         FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
        ) grouped GROUP BY status_group
        ORDER BY FIELD(status_group, 'New', 'Processing', 'Completed', 'Cancelled', 'Draft')`, [tenant]
     ),
@@ -68,13 +69,13 @@ export async function getDashboardOverview({ tenantId, connection = getPrimaryPo
          SELECT 'ORDER', co.order_number, 'Order awaiting fulfilment', s.name,
                 co.created_at, 'ACTION'
            FROM customer_orders co JOIN stores s ON s.id = co.store_id
-          WHERE co.tenant_id = ? AND co.status NOT IN ('DRAFT','CANCELLED','COMPLETED')
+          WHERE co.tenant_id = ? AND ${businessCustomer()} AND co.status NOT IN ('DRAFT','CANCELLED','COMPLETED')
             AND co.fulfillment_status IN ('UNFULFILLED','PARTIALLY_FULFILLED')
          UNION ALL
          SELECT 'RETURN', rr.return_number, CONCAT(rr.return_type, ' return review'), co.order_number,
                 rr.requested_at, 'REVIEW'
            FROM return_requests rr JOIN customer_orders co ON co.id = rr.customer_order_id
-          WHERE rr.tenant_id = ? AND rr.status = 'REQUESTED'
+          WHERE rr.tenant_id = ? AND co.tenant_id=rr.tenant_id AND ${businessCustomer()} AND rr.status = 'REQUESTED'
          UNION ALL
          SELECT 'INVENTORY', pv.sku, CONCAT(p.name, ' below reorder level'), w.name,
                 COALESCE(ib.last_movement_at, ib.updated_at), 'RISK'
@@ -96,6 +97,7 @@ export async function getDashboardOverview({ tenantId, connection = getPrimaryPo
 
   const metrics = metricResult[0][0];
   return {
+    financialScope:{testOrdersExcluded:true,valueBasis:'ORDER_VALUE_NOT_COLLECTION'},
     metrics: {
       ordersToday: number(metrics.orders_today), ordersYesterday: number(metrics.orders_yesterday),
       awaitingFulfillment: number(metrics.awaiting_fulfillment), lowStock: number(metrics.low_stock),

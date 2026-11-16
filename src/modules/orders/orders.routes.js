@@ -3,6 +3,7 @@ import { authenticate } from "../auth/auth.middleware.js";
 import { requirePermission, resolveTenantAccess } from "../access-control/access-control.middleware.js";
 import * as defaultService from "./orders.service.js";
 import { createOrdersController } from "./orders.controller.js";
+import { createOrderSubstitutionsRouter } from './order-substitutions.routes.js';
 import { allocateFulfillmentSchema, createOrderSchema, fulfillmentItemSchema,
   listOrdersSchema, orderItemSchema, transitionFulfillmentSchema, transitionOrderSchema,
   validateBody, validateParams, validateQuery } from "./orders.validators.js";
@@ -15,6 +16,7 @@ export function createOrdersRouter({
   const router = Router();
   const controller = createOrdersController(ordersService);
   router.use(authenticate, resolveTenant);
+  router.use(createOrderSubstitutionsRouter({authorize}));
   router.get("/orders/options", authorize("order.create"), controller.options);
   router.get("/orders", authorize("order.read"), validateQuery(listOrdersSchema), controller.list);
   router.post("/orders", authorize("order.create"), validateBody(createOrderSchema), controller.create);

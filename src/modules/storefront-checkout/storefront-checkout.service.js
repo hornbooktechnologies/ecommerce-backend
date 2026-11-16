@@ -61,7 +61,7 @@ export function createStorefrontCheckoutService({ dao = defaultDao, accountDao =
       line1: address.line1, line2: address.line2, landmark: address.landmark, city: address.city,
       stateCode: address.stateCode, stateName: states[address.stateCode], postalCode: address.postalCode },
     deliverySlotId: slot.id, promotionId, couponCode: selection.couponCode, customerNotes: selection.notes, internalNotes: "",
-    items: cart.items.map(({merchTouchId,...line}) => ({ ...line, substitutionPreference: selection.substitutionPreference })) };
+    items: cart.items.map((item) => {const line={...item};delete line.merchTouchId;return { ...line, substitutionPreference: selection.substitutionPreference };}) };
     // Use the authenticated customer, never the admin email-or-phone matching heuristic.
     // Use the storefront's dated price list and exact eligible offers, with the existing GST engine.
     const engine = orderFactory({ transaction: async (_tenant, operation) => operation(connection), dao: { ...orderDao,

@@ -99,7 +99,8 @@ export function createStorefrontCartService({ dao = defaultDao, accountDao = acc
       }
       const products = await offers({ scope: store, offerIds: cart.items.map((line) => line.offerId), connection });
       const byId = new Map(products.map((product) => [product.offerId, product]));
-      const items = cart.items.map(({merchTouchId,...line}) => {
+      const items = cart.items.map((item) => {
+        const line={...item};delete line.merchTouchId;
         const product = byId.get(line.offerId) || null;
         const issue = quantityIssue(product, line.quantity);
         return { ...line, product, issue, lineTotal: product ? Number(new Decimal(product.price).times(line.quantity).toDecimalPlaces(2)) : null };

@@ -1,5 +1,6 @@
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import {businessSeller} from '../../database/policies/business-orders.js';
 import { enqueueVendorApprovalInbox } from "../notifications/vendor-approval-inbox.events.js";
 
 const number = (value) => value === null || value === undefined ? null : Number(value);
@@ -48,9 +49,9 @@ const vendorSelect = `SELECT m.*, vp.onboarding_status, vp.business_type, vp.con
   (SELECT COUNT(*) FROM seller_offers so WHERE so.merchant_id = m.id AND so.status = 'ACTIVE' AND so.deleted_at IS NULL) AS active_offer_count,
   (SELECT COUNT(DISTINCT pv.product_id) FROM seller_offers so JOIN product_variants pv ON pv.id = so.variant_id
     WHERE so.merchant_id = m.id AND so.deleted_at IS NULL) AS product_count,
-  (SELECT COUNT(*) FROM seller_orders seller WHERE seller.merchant_id = m.id) AS order_count,
+  (SELECT COUNT(*) FROM seller_orders seller WHERE seller.tenant_id=m.tenant_id AND seller.merchant_id = m.id AND ${businessSeller('seller')}) AS order_count,
   (SELECT COALESCE(SUM(seller.grand_total), 0) FROM seller_orders seller WHERE seller.merchant_id = m.id
-    AND seller.status <> 'CANCELLED') AS gross_sales,
+    AND seller.tenant_id=m.tenant_id AND ${businessSeller('seller')} AND seller.status NOT IN ('DRAFT','CANCELLED')) AS gross_sales,
   (SELECT COALESCE(SUM(ib.on_hand_quantity - ib.reserved_quantity - ib.quarantine_quantity), 0)
     FROM inventory_balances ib JOIN seller_offers so ON so.id = ib.offer_id WHERE so.merchant_id = m.id) AS available_units
   FROM merchants m JOIN vendor_profiles vp ON vp.merchant_id = m.id

@@ -1,6 +1,16 @@
 import {reminderVisible} from '../reminders/reminders.rules.js';
 import {shoppingNotificationVisible} from "../shopping/shopping.rules.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+// A dedicated connection holds this schema-specific advisory lease for one daemon.
+export async function acquireInboxDaemonLease() {
+  const connection=await getPrimaryPool().getConnection();
+  const key="CONCAT('commerce-inbox:',LEFT(SHA2(DATABASE(),256),32))";
+  try {
+    const [[row]]=await connection.execute(`SELECT GET_LOCK(${key},0) AS acquired`);
+    if(Number(row.acquired)!==1){connection.release();return null;}
+    return {async assertOwned(){const [[current]]=await connection.execute({sql:`SELECT IS_USED_LOCK(${key})=CONNECTION_ID() AS owned`,timeout:5000});if(Number(current.owned)!==1)throw Error('Inbox daemon lease lost');},async release(){try{await connection.execute({sql:`SELECT RELEASE_LOCK(${key})`,timeout:5000});}finally{connection.release();}}};
+  }catch(error){connection.release();throw error;}
+}
 import { stockSourceJoins, stockSourceEligible } from "./stock-alerts.dao.js";
 import { createId, uuidToBuffer as id, bufferToUuid as uuid } from "../../core/identifiers/uuid.js";
 import { isOptionalCategory } from "./inbox-preferences.rules.js";

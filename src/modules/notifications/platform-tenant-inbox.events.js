@@ -28,7 +28,7 @@ export function createPlatformTenantInboxEvents({ dao = defaultDao } = {}) {
     const permission = "platform.tenant.read";
     const recipients = await dao.platformRecipients({ permission, connection });
     if (!recipients.length) return;
-    const code = String(source.code || tenantId).replace(/[\u0000-\u001f\u007f]/g, " ").slice(0,100);
+    const code = String(source.code || tenantId).replace(/\p{Cc}/gu, " ").slice(0,100);
     await dao.enqueue({ event: {
       tenantId, audience: "PLATFORM", permission, recipients,
       key: `PLATFORM_TENANT:${auditId}:PLATFORM`,

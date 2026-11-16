@@ -46,5 +46,5 @@ export async function bind({tenantId,productId,guideId,connection}) {
 export async function publicGuide({tenantId,productId,connection=getPrimaryPool()}) {
  const resolved=await resolveDefault({tenantId,productId,connection,publicOnly:true});if(!resolved.guideId)return null;
  const guide=await find({tenantId,guideId:resolved.guideId,connection});if(!guide||guide.status!=='ACTIVE')return null;
- const {status,usageCount,...safe}=guide; return safe;
+ const safe={...guide};delete safe.status;delete safe.usageCount;return safe;
 }

@@ -31,6 +31,7 @@ test("detail exposes only media for eligible variants/colours and whitelisted sp
   const service = createStorefrontService({ dao: { async resolveStore() { return scope; }, async findProduct() { return { id: "p", name: "Shirt" }; },
     async listVariants() { return [{ id: "v", colorId: "blue" }]; }, async listReviews() { return []; } },
   media: async ({ tenantId }) => { assert.equal(tenantId, scope.tenantId); return [{ id: "1", url: "https://example.com/one.jpg" }, { id: "2", colorOptionId: "blue" }, { id: "3", variantId: "hidden" }, { id: "4", colorOptionId: "red" }]; },
+  specs: async ({tenantId,productId}) => {assert.equal(tenantId,scope.tenantId);assert.equal(productId,"p");return [];},
   customFields: async () => [{ label: "Material", value: "Cotton" }, { label: "Supplier cost", value: "SECRET" }, { label: "Rating", value: "4.9" }] });
   const result = await service.detail({}, "shirt");
   assert.deepEqual(result.images.map((item) => item.id), ["1", "2"]);

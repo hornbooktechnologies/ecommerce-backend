@@ -9,7 +9,7 @@ import { inboxSchemas } from "../src/modules/notifications/inbox.routes.js";
 const userId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b88";
 const sessionId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b77";
 test("inbox validation defaults to ten and rejects identity injection", () => {
-  assert.deepEqual(inboxSchemas.list.validate({}).value, { filter: "ALL", page: 1, pageSize: 10 });
+  assert.deepEqual(inboxSchemas.list.validate({}).value, { filter: "ALL", category: "ALL", search: "", page: 1, pageSize: 10 });
   for (const value of [{ recipientId: userId }, { page: 0 }, { pageSize: 500 }, { filter: "PRIVATE" }]) assert.ok(inboxSchemas.list.validate(value).error);
   assert.ok(inboxSchemas.mark.validate({ read: "false" }).error);
   assert.ok(inboxSchemas.all.validate({}).error);

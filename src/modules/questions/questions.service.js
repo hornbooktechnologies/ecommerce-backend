@@ -12,7 +12,7 @@ async function required(args){const question=await dao.find(args);if(!question)f
 function changed(question,version){if(question.version!==version)fail('QUESTION_CHANGED','This question changed. Reload it before continuing.',409);if(question.status==='WITHDRAWN')fail('QUESTION_WITHDRAWN','The customer withdrew this question.',409);}
 async function eligible(question,tenantId,connection){const scope=await dao.store({tenantId,storeId:question.storeId,connection});if(!scope||!await findProduct({scope,slug:question.productSlug,connection}))fail('QUESTION_PRODUCT_UNAVAILABLE','The store or product is not currently available to customers.',409);}
 async function audit(tenantId,questionId,action,context,connection){await insertAudit({audit:{id:createId(),tenantId,entityId:questionId,entityType:'PRODUCT_QUESTION',action,afterData:{questionId},actorUserId:context.actorUserId,requestId:context.requestId,ipAddress:context.ipAddress||null,userAgent:context.userAgent?.slice(0,500)||null},connection});}
-async function notify(question,tenantId,kind,connection,{answerId,merchantId}={}){
+async function notify(question,tenantId,kind,connection,{answerId}={}){
  const event={tenantId,storeId:question.storeId,entityType:'PRODUCT_QUESTION',entityId:question.id,category:'QUESTIONS',kind,
   key:`question:${question.id}:${kind}:${answerId||question.version}`,message:'Open product questions to review the latest update.'};
  if(kind==='QUESTION_ANSWER_PUBLISHED'){

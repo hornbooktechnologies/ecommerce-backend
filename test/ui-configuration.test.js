@@ -86,7 +86,7 @@ test("UI configuration exposes only implemented modules even when more permissio
   ]);
 
   assert.deepEqual(ui.navigation.platform.map((item) => item.href), [
-    "/platform", "/platform/tenants", "/platform/team"
+    "/platform", "/platform/tenants", "/platform/notification-deliveries", "/platform/team"
   ]);
   assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.href), [
     "/admin", "/admin/orders", "/admin/returns", "/admin/catalog/products", "/admin/inventory", "/admin/stores",

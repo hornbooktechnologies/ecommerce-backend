@@ -1,5 +1,6 @@
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import {businessSeller} from '../../database/policies/business-orders.js';
 
 const number = (value) => value === null || value === undefined ? null : Number(value);
 const iso = (value) => value ? new Date(value).toISOString() : null;
@@ -69,13 +70,14 @@ export async function listSellerOrders({ tenantId, merchantId, filters,
       SUM(so.status = 'CONFIRMED' AND so.fulfillment_status = 'UNFULFILLED') AS ready_to_fulfill,
       SUM(so.fulfillment_status = 'PROCESSING') AS processing,
       SUM(so.status = 'COMPLETED') AS completed,
-      COALESCE(SUM(CASE WHEN so.status = 'COMPLETED' AND so.completed_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)
+      COALESCE(SUM(CASE WHEN ${businessSeller()} AND so.status = 'COMPLETED' AND so.completed_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)
         THEN so.merchant_payable_total ELSE 0 END), 0) AS payable_30d
       FROM seller_orders so WHERE so.tenant_id = ? AND so.merchant_id = ?`, [tenant, merchant])
   ]);
   const total = Number(countResult[0][0].total || 0); const summary = summaryResult[0][0];
   return { items: rowsResult[0].map(mapSellerOrder), total, page: filters.page,
     pageSize: filters.pageSize, totalPages: Math.max(1, Math.ceil(total / filters.pageSize)),
+    financialScope:{testOrdersExcluded:true,operationalOrderCountsIncludeTests:true},
     summary: { total: Number(summary.total || 0), awaitingAction: Number(summary.awaiting_action || 0),
       readyToFulfill: Number(summary.ready_to_fulfill || 0), processing: Number(summary.processing || 0),
       completed: Number(summary.completed || 0), payable30d: number(summary.payable_30d) || 0 } };

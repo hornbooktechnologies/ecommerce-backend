@@ -31,7 +31,7 @@ export function createVendorApprovalInboxEvents({ dao = defaultDao } = {}) {
       recipients = source.createdBy && readers.includes(source.createdBy) ? [source.createdBy] : [];
     }
     if (!recipients.length) return;
-    const code = String(source.merchantCode || source.vendorId).replace(/[\u0000-\u001f\u007f]/g, " ").slice(0,100);
+    const code = String(source.merchantCode || source.vendorId).replace(/\p{Cc}/gu, " ").slice(0,100);
     await dao.enqueue({ event: {
       tenantId, audience: "ADMIN", permission, recipients,
       key: `VENDOR_APPROVAL:${auditId}:ADMIN`,

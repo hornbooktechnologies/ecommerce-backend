@@ -16,6 +16,7 @@
     "notifications:once": "node src/workers/order-notifications.js --once",
     "notifications:status": "node src/workers/order-notifications.js --status",
     "notifications:inbox": "node src/workers/inbox.js",
+    "notifications:inbox:supervise": "node src/workers/inbox-supervisor.js",
     "notifications:inbox:once": "node src/workers/inbox.js --once",
     "notifications:inbox:status": "node src/workers/inbox.js --status",
     "notifications:stock": "node src/workers/stock-alerts.js",

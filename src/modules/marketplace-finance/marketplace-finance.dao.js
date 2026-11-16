@@ -1,5 +1,6 @@
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
+import {businessCustomer,businessLedger} from '../../database/policies/business-orders.js';
 
 const number = (value) => value === null || value === undefined ? null : Number(value);
 const iso = (value) => value instanceof Date ? value.toISOString() : value;
@@ -31,7 +32,7 @@ const ruleSelect = `SELECT cr.*, m.display_name AS merchant_name, s.name AS stor
   LEFT JOIN stores s ON s.id = cr.store_id`;
 
 export async function getWorkspace({ tenantId, filters, connection = getPrimaryPool() }) {
-  const tenant = uuidToBuffer(tenantId); const where = ["ml.tenant_id = ?"]; const params = [tenant];
+  const tenant = uuidToBuffer(tenantId); const where = ["ml.tenant_id = ?",businessLedger()]; const params = [tenant];
   if (filters.search) { const term = `%${escapeSearch(filters.search)}%`;
     where.push(`(m.display_name LIKE ? ESCAPE '\\\\' OR m.merchant_code LIKE ? ESCAPE '\\\\'
       OR so.seller_order_number LIKE ? ESCAPE '\\\\' OR ml.description LIKE ? ESCAPE '\\\\')`);
@@ -47,11 +48,11 @@ export async function getWorkspace({ tenantId, filters, connection = getPrimaryP
       ORDER BY ml.effective_at DESC, ml.created_at DESC LIMIT ? OFFSET ?`, [...params, filters.pageSize, offset]),
     connection.execute(`SELECT COUNT(*) AS total FROM merchant_ledger_entries ml JOIN merchants m ON m.id = ml.merchant_id
       LEFT JOIN seller_orders so ON so.id = ml.seller_order_id WHERE ${clause}`, params),
-    connection.execute(`SELECT COALESCE(SUM(balance_effect), 0) AS current_balance,
-      COALESCE(SUM(CASE WHEN settlement_status = 'UNSETTLED' THEN balance_effect ELSE 0 END), 0) AS unsettled_balance,
-      COALESCE(SUM(CASE WHEN entry_type = 'SALE_CREDIT' THEN amount ELSE 0 END), 0) AS gross_sales,
-      COALESCE(SUM(CASE WHEN entry_type IN ('COMMISSION_DEBIT','COMMISSION_GST_DEBIT') THEN amount ELSE 0 END), 0) AS commission,
-      COUNT(DISTINCT merchant_id) AS merchants FROM merchant_ledger_entries WHERE tenant_id = ?`, [tenant]),
+    connection.execute(`SELECT COALESCE(SUM(ml.balance_effect), 0) AS current_balance,
+      COALESCE(SUM(CASE WHEN ml.settlement_status = 'UNSETTLED' THEN ml.balance_effect ELSE 0 END), 0) AS unsettled_balance,
+      COALESCE(SUM(CASE WHEN ml.entry_type = 'SALE_CREDIT' THEN ml.amount ELSE 0 END), 0) AS gross_sales,
+      COALESCE(SUM(CASE WHEN ml.entry_type IN ('COMMISSION_DEBIT','COMMISSION_GST_DEBIT') THEN ml.amount ELSE 0 END), 0) AS commission,
+      COUNT(DISTINCT ml.merchant_id) AS merchants FROM merchant_ledger_entries ml WHERE ml.tenant_id = ? AND ${businessLedger()}`, [tenant]),
     connection.execute(`${ruleSelect} WHERE cr.tenant_id = ? ORDER BY cr.status = 'ACTIVE' DESC,
       cr.priority DESC, cr.effective_from DESC`, [tenant]),
     connection.execute(`SELECT id, merchant_code, display_name, merchant_type, status FROM merchants
@@ -59,7 +60,7 @@ export async function getWorkspace({ tenantId, filters, connection = getPrimaryP
     connection.execute(`SELECT id, code, name, status FROM stores WHERE tenant_id = ? AND deleted_at IS NULL ORDER BY name`, [tenant])
   ]);
   const total = Number(countResult[0][0].total || 0); const summary = summaryResult[0][0];
-  return { entries: entryResult[0].map(mapEntry), rules: ruleResult[0].map(mapRule),
+  return { financialScope:{testOrdersExcluded:true,summaryIgnoresListingFilters:true,valueBasis:'ACCRUAL_NOT_CASH'},entries: entryResult[0].map(mapEntry), rules: ruleResult[0].map(mapRule),
     merchants: merchantResult[0].map((row) => ({ id: bufferToUuid(row.id), code: row.merchant_code,
       name: row.display_name, type: row.merchant_type, status: row.status })),
     stores: storeResult[0].map((row) => ({ id: bufferToUuid(row.id), code: row.code, name: row.name, status: row.status })),
@@ -126,7 +127,7 @@ export async function listCompletedSellerOrdersForLedger({ tenantId, orderId, co
     FROM seller_orders so JOIN customer_orders co ON co.id = so.customer_order_id
     JOIN merchants m ON m.id = so.merchant_id AND m.merchant_type = 'VENDOR'
     LEFT JOIN vendor_profiles vp ON vp.merchant_id = so.merchant_id
-    WHERE so.tenant_id = ? AND so.customer_order_id = ? AND so.status = 'COMPLETED'
+    WHERE so.tenant_id = ? AND co.tenant_id=so.tenant_id AND ${businessCustomer()} AND so.customer_order_id = ? AND so.status = 'COMPLETED'
     FOR UPDATE`, [uuidToBuffer(tenantId), uuidToBuffer(orderId)]);
   return rows.map((row) => ({ id: bufferToUuid(row.id), merchantId: bufferToUuid(row.merchant_id),
     merchantName: row.merchant_name, sellerOrderNumber: row.seller_order_number,
@@ -179,9 +180,10 @@ export async function updateSellerOrderFinance({ sellerOrderId, commissionTotal,
 export async function listEligibleOrderIds({ tenantId, connection, limit = 100 }) {
   const [rows] = await connection.execute(`SELECT DISTINCT so.customer_order_id
     FROM seller_orders so JOIN merchants m ON m.id = so.merchant_id AND m.merchant_type = 'VENDOR'
+    JOIN customer_orders co ON co.id=so.customer_order_id AND co.tenant_id=so.tenant_id
     LEFT JOIN merchant_ledger_entries ml ON ml.tenant_id = so.tenant_id
       AND ml.reference_type = 'SELLER_ORDER' AND ml.reference_id = so.id
-    WHERE so.tenant_id = ? AND so.status = 'COMPLETED' AND ml.id IS NULL
+    WHERE so.tenant_id = ? AND ${businessCustomer()} AND so.status = 'COMPLETED' AND ml.id IS NULL
     ORDER BY so.completed_at, so.customer_order_id LIMIT ?`, [uuidToBuffer(tenantId), limit]);
   return rows.map((row) => bufferToUuid(row.customer_order_id));
 }

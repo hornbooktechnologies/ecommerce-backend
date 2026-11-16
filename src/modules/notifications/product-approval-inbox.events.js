@@ -32,7 +32,7 @@ export function createProductApprovalInboxEvents({ dao = defaultDao } = {}) {
       recipients = source.submittedBy && readers.includes(source.submittedBy) ? [source.submittedBy] : [];
     }
     if (!recipients.length) return;
-    const code = String(source.productCode || source.productId).replace(/[\u0000-\u001f\u007f]/g, " ").slice(0,100);
+    const code = String(source.productCode || source.productId).replace(/\p{Cc}/gu, " ").slice(0,100);
     await dao.enqueue({ event: {
       tenantId, audience: "ADMIN", permission, recipients,
       key: `PRODUCT_APPROVAL:${auditId}:ADMIN`,

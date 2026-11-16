@@ -7,7 +7,7 @@ import * as dao from './shopping.dao.js';
 import {audit} from '../customer-accounts/customer-accounts.dao.js';
 import {enqueue} from '../notifications/inbox.dao.js';
 const fail=(code,message,status=422)=>{throw new AppError({code,message,status});};
-const dto=({cycleId,customerId,tenantId,storeId,...value})=>value;
+const dto=value=>Object.fromEntries(Object.entries(value).filter(([key])=>!['cycleId','customerId','tenantId','storeId'].includes(key)));
 const sellable=offer=>offer&&Math.min(offer.availableQuantity,offer.maximumOrderQuantity??offer.availableQuantity)>=offer.minimumOrderQuantity;
 export async function offerSubscriptions(scope,account,input,connection){return {items:(await dao.offerSubscriptions({...scope,customerId:account.customerId,...input,connection})).map(dto)};}
 export async function discovery(scope,input,connection){
