@@ -6,8 +6,8 @@ const tenantId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b79";
 
 test("navigation groups are API supplied without granting extra destinations", () => {
   const ui = buildUiConfiguration([{ roleLevel: "TENANT", tenantId, permissions: ["order.read", "catalog.product.read", "tax.read"] }]);
-  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.group.id), ["daily", "products", "settings"]);
-  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.group.order), [0, 1, 4]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.group.id), ["setup", "products", "orders"]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.group.order), [1, 2, 5]);
   assert.equal(ui.navigation.admin[tenantId].length, 3);
 });
 
@@ -17,7 +17,7 @@ test("UI configuration filters tenant navigation from role capabilities", () => 
     permissions: ["dashboard.read", "catalog.product.read", "catalog.product.update"]
   }]);
 
-  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.label), ["Overview", "Catalog"]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.label), ["Dashboard", "Product catalog"]);
   assert.deepEqual(ui.capabilities.admin[tenantId], [
     "catalog.product.read", "catalog.product.update", "dashboard.read"
   ]);
@@ -30,8 +30,8 @@ test("UI configuration keeps permissions isolated between tenant contexts", () =
     { roleLevel: "TENANT", roleKey: "inventory_manager", tenantId: secondTenantId, permissions: ["inventory.stock.read"] }
   ]);
 
-  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.label), ["Catalog"]);
-  assert.deepEqual(ui.navigation.admin[secondTenantId].map((item) => item.label), ["Inventory"]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.label), ["Product catalog"]);
+  assert.deepEqual(ui.navigation.admin[secondTenantId].map((item) => item.label), ["Inventory & warehouses"]);
 });
 
 test("tax navigation appears only when the API grants tax access", () => {
@@ -57,7 +57,7 @@ test("procurement navigation appears only when supplier and purchase-order acces
     roleLevel: "TENANT", roleKey: "inventory_manager", tenantId,
     permissions: ["inventory.stock.read", "procurement.read", "procurement.manage"]
   }]);
-  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.href), ["/admin/inventory", "/admin/procurement"]);
+  assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.href), ["/admin/procurement", "/admin/inventory"]);
   assert.equal(ui.capabilities.admin[tenantId].includes("procurement.manage"), true);
 });
 
@@ -86,11 +86,11 @@ test("UI configuration exposes only implemented modules even when more permissio
   ]);
 
   assert.deepEqual(ui.navigation.platform.map((item) => item.href), [
-    "/platform", "/platform/tenants", "/platform/notification-deliveries", "/platform/team"
+    "/platform", "/platform/tenants", "/platform/team", "/platform/notification-deliveries"
   ]);
   assert.deepEqual(ui.navigation.admin[tenantId].map((item) => item.href), [
-    "/admin", "/admin/orders", "/admin/returns", "/admin/catalog/products", "/admin/inventory", "/admin/stores",
-    "/admin/homepage", "/admin/vendors", "/admin/finance", "/admin/reports", "/admin/settings/users", "/admin/settings/roles"
+    "/admin", "/admin/stores", "/admin/settings/users", "/admin/settings/roles", "/admin/vendors",
+    "/admin/catalog/products", "/admin/inventory", "/admin/homepage", "/admin/orders", "/admin/returns", "/admin/reports", "/admin/finance"
   ]);
   assert.deepEqual(ui.navigation.vendor[tenantId].map((item) => item.href), [
     "/vendor", "/vendor/orders"
