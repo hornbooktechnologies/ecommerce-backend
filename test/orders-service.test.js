@@ -10,7 +10,7 @@ const transaction = (_tenantId, operation) => operation({});
 
 test("order lifecycle transition writes history, audit, and outbox together", async () => {
   const calls = [];
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findOrderForUpdate() { return { id: orderId, status: "PLACED", version: 0 }; },
     async updateOrderStatus(input) { calls.push(["status", input.status]); },
     async insertStatusHistory() { calls.push(["history"]); },
@@ -26,7 +26,7 @@ test("order lifecycle transition writes history, audit, and outbox together", as
 });
 
 test("completed orders reject further lifecycle changes", async () => {
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findOrderForUpdate() { return { id: orderId, status: "COMPLETED", version: 2 }; }
   } });
   await assert.rejects(() => service.transitionOrder(tenantId, orderId, {
@@ -53,7 +53,7 @@ test("completing an order posts its vendor ledger in the same transaction", asyn
 });
 
 test("dispatched orders require the returns workflow instead of cancellation", async () => {
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findOrderForUpdate() { return { id: orderId, status: "PROCESSING", version: 2 }; },
     async hasDispatchedFulfillment() { return true; }
   } });
@@ -88,7 +88,7 @@ test("bundle availability is calculated from the scarcest required component", a
 test("manual order creation calculates server-owned totals and seller split", async () => {
   const calls = [];
   let sequence = 0;
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findStoreContext() { return { id: "store", currency: "INR" }; },
     async findOffersForOrder() { return [{
       id: "offer", merchantId: "merchant", variantId: "variant", merchantName: "Seller",
@@ -133,7 +133,7 @@ test("manual order creation calculates server-owned totals and seller split", as
 
 test("manual order creation applies a coupon promotion and records redemption", async () => {
   let insertedOrder; let insertedSeller; let insertedItem; let redemption;
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findStoreContext() { return { id: "store", currency: "INR" }; },
     async findOffersForOrder() { return [{ id: "offer", merchantId: "merchant", variantId: "variant",
       merchantName: "Seller", productName: "Demo item", variantName: "Standard", sku: "DEMO-1",
@@ -168,7 +168,7 @@ test("manual order creation applies a coupon promotion and records redemption", 
 
 test("order cancellation reverses promotion usage", async () => {
   let reversed = false;
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findOrderForUpdate() { return { id: orderId, status: "PLACED", version: 0 }; },
     async hasDispatchedFulfillment() { return false; }, async updateOrderStatus() {},
     async releaseDeliverySlot() {}, async releaseFulfillmentReservations() {},
@@ -181,7 +181,7 @@ test("order cancellation reverses promotion usage", async () => {
 });
 
 test("manual order creation enforces product quantity steps", async () => {
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findStoreContext() { return { id: "store", currency: "INR" }; },
     async findOffersForOrder() { return [{ id: "offer", merchantId: "merchant",
       variantId: "variant", productName: "Apples", vertical: "GROCERY",
@@ -199,7 +199,7 @@ test("manual order creation enforces product quantity steps", async () => {
 
 test("manual order creation snapshots IGST for an inter-state supply", async () => {
   let insertedItem;
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findStoreContext() { return { id: "store", currency: "INR" }; },
     async findOffersForOrder() { return [{ id: "offer", merchantId: "merchant",
       variantId: "variant", merchantName: "Seller", productName: "Headphones",
@@ -232,7 +232,7 @@ test("manual order creation snapshots IGST for an inter-state supply", async () 
 });
 
 test("manual order creation rejects products without an effective GST rate", async () => {
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findStoreContext() { return { id: "store", currency: "INR" }; },
     async findOffersForOrder() { return [{ id: "offer", merchantId: "merchant",
       variantId: "variant", merchantName: "Seller", productName: "Unconfigured product",
@@ -246,7 +246,7 @@ test("manual order creation rejects products without an effective GST rate", asy
 
 test("fulfilment allocation reserves stock and creates an operational record", async () => {
   const calls = [];
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findSellerOrderForFulfillment() { return { id: "seller", merchantId: "merchant",
       fulfillmentStatus: "UNFULFILLED", orderStatus: "CONFIRMED", storeId: "store",
       hasFulfillment: false, items: [{ id: "item", offerId: "offer", productName: "Shirt",
@@ -273,7 +273,7 @@ test("fulfilment allocation reserves stock and creates an operational record", a
 });
 
 test("fulfilment allocation rejects insufficient warehouse stock", async () => {
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findSellerOrderForFulfillment() { return { id: "seller", merchantId: "merchant",
       fulfillmentStatus: "UNFULFILLED", orderStatus: "CONFIRMED", storeId: "store",
       hasFulfillment: false, items: [{ id: "item", offerId: "offer", productName: "Television",
@@ -290,7 +290,7 @@ test("fulfilment allocation rejects insufficient warehouse stock", async () => {
 
 test("bundle fulfilment reserves component stock against the parent order line", async () => {
   let insertedItem; let reserved;
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findSellerOrderForFulfillment() { return { id: "seller", merchantId: "merchant",
       fulfillmentStatus: "UNFULFILLED", orderStatus: "CONFIRMED", storeId: "store",
       hasFulfillment: false, items: [{ id: "component-snapshot", allocationId: "component-snapshot",
@@ -316,7 +316,7 @@ test("bundle fulfilment reserves component stock against the parent order line",
 
 test("fulfilment lifecycle enforces sequential picking and packing", async () => {
   const calls = [];
-  const service = createOrdersService({ transaction, dao: {
+  const service = createOrdersService({ transaction, resolveZone:async()=>({deliveryDays:3,deliveryFee:0}), dao: {
     async findFulfillmentForUpdate() { return { id: "fulfillment", status: "PENDING",
       sellerOrderId: "seller", orderFulfillmentStatus: "PROCESSING" }; },
     async updateFulfillmentStage({ status }) { calls.push(["stage", status]); },

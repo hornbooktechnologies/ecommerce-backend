@@ -10,7 +10,8 @@ const navigationCatalog = {
     { id: "platform", label: "Dashboard", href: "/platform", icon: "overview", capability: "platform.dashboard.read" },
     { id: "tenants", label: "Businesses (tenants)", href: "/platform/tenants", icon: "tenants", capability: "platform.tenant.read", matchPrefix: "/platform/tenants" },
     { id: "team", label: "Platform team", href: "/platform/team", icon: "users", capability: "platform.user.read", matchPrefix: "/platform/team" },
-    { id: "notification-deliveries", label: "Notification deliveries", href: "/platform/notification-deliveries", icon: "jobs", capability: "platform.notification.read" }
+    { id: "notification-deliveries", label: "Notification deliveries", href: "/platform/notification-deliveries", icon: "jobs", capability: "platform.notification.read" },
+    { id: "platform-audit", label: "Platform audit log", href: "/platform/audit-log", icon: "audit", capability: "platform.audit.read" }
   ],
   admin: [
     { id: "admin", label: "Dashboard", href: "/admin", icon: "overview", capability: "dashboard.read", pinned: true },

@@ -14,8 +14,7 @@ function mapVendor(row) {
     supportEmail: row.support_email,
     supportPhone: row.support_phone, approvedAt: iso(row.approved_at), createdAt: iso(row.created_at),
     onboardingStatus: row.onboarding_status, businessType: row.business_type,
-    contactPerson: row.contact_person, defaultCommissionPercent: number(row.default_commission_rate) === null
-      ? null : number(row.default_commission_rate) * 100,
+    contactPerson: row.contact_person, defaultCommissionPercent: number(row.default_commission_percent),
     settlementCycleDays: Number(row.settlement_cycle_days || 0), notes: row.notes || "",
     gstin: row.gstin || null, address: row.line1 ? { line1: row.line1, line2: row.line2 || "",
       city: row.city, district: row.district || "", stateCode: row.state_code,
@@ -40,7 +39,7 @@ function mapOffer(row) {
 }
 
 const vendorSelect = `SELECT m.*, vp.onboarding_status, vp.business_type, vp.contact_person,
-  vp.default_commission_rate, vp.settlement_cycle_days, vp.notes,
+  vp.default_commission_rate * 100 AS default_commission_percent, vp.settlement_cycle_days, vp.notes,
   a.line1, a.line2, a.city, a.district, a.state_code, a.state_name, a.postal_code, a.country_code,
   (SELECT gr.gstin FROM gst_registrations gr WHERE gr.merchant_id = m.id AND gr.status = 'ACTIVE'
     ORDER BY gr.created_at DESC LIMIT 1) AS gstin,

@@ -16,24 +16,25 @@ function setup() {
   const slot = { id: slotId, startsAt: "2099-01-01T00:00:00Z", endsAt: "2099-01-01T01:00:00Z", deliveryFee: 20, minimumOrderAmount: 0, freeDeliveryThreshold: null };
   const account = { customerId, firstName: "Test", lastName: "Customer", email: "checkout@example.invalid", status: "ACTIVE" };
   const key = digest(`customer:${customerId}`).toString("hex");
-  const input = { addressId, deliverySlotId: slotId, couponCode: "", notes: "", substitutionPreference: "CONTACT_ME", revision: 2,
+  const input = { addressId, couponCode: "", notes: "", substitutionPreference: "CONTACT_ME", revision: 2,
     cartKey: digest(`${scope.tenantId}:${scope.storeId}:${key}`).toString("hex") };
   const service = createStorefrontCheckoutService({ transaction: async (_tenant, fn) => fn({}), storeResolver: async () => scope,
     payments: { options: async () => ({ codEnabled: true, onlineEnabled: false }), attach: async () => {}, read: async (_scope, receipt) => receipt },
-    delivery: async ({ postalCode }) => ({ postalCode, status: "FULL", message: "All slots are full." }),
+    delivery: async ({ postalCode }) => ({ postalCode, available:true, expectedDeliveryDate:"2099-01-03" }),
     accountDao: { session: async ({ tenantId, tokenHash }) => tenantId === scope.tenantId && tokenHash.equals(digest("a".repeat(64))) ? account : null,
       findAccount: async () => account, limit: async () => true,
       addresses: async () => [{ id: addressId, contactName: "Test", phone: "+919876543210", line1: "123 Test Road", line2: "", landmark: "", city: "Bengaluru", stateCode: "KA", postalCode: "560001" }] },
     cartDao: { read: async () => structuredClone(cart), save: async ({ items }) => { cart.items = items; cart.revision++; } },
     offers: async () => [product],
     orderDao: { findOffersForOrder: async () => [{ id: offerId }] },
-    dao: { previousAddresses: async () => [], slots: async () => slot.closed ? [] : [{ ...slot }], couponPromotion: async () => null,
+    dao: { previousAddresses: async () => [], couponPromotion: async () => null,
       insertQuote: async ({ quoteId, quote, revision, customerId: owner }) => rows.set(quoteId, { quote: structuredClone(quote), revision, owner, expiresAt: "2099-01-01T00:00:00Z" }),
       readQuote: async ({ quoteId, customerId: owner }) => rows.get(quoteId)?.owner === owner ? rows.get(quoteId) : null,
       complete: async ({ quoteId, receipt }) => { rows.get(quoteId).receipt = receipt; } },
     orderFactory: ({ dao }) => ({ createOrder: async (_tenant, data, context) => {
       const [offer] = await dao.findOffersForOrder({});
-      const review = { grandTotal: offer.salePrice + slot.deliveryFee, currency: "INR", items: [{ offerId, quantity: data.items[0].quantity }] };
+      if (slot.closed) throw Object.assign(new Error("Coverage changed"),{status:409});
+      const review = { expectedDeliveryDate:"2099-01-03", grandTotal: offer.salePrice + slot.deliveryFee, currency: "INR", items: [{ offerId, quantity: data.items[0].quantity }] };
       if (context.preview) return review;
       context.verifyReview(review); counts.orders++;
       return { order: { id: createId(), orderNumber: "WEB-TEST", grandTotal: review.grandTotal, currency: "INR" } };
@@ -49,14 +50,15 @@ test("checkout requires customer authentication and rejects client pricing or id
 });
 test("review does not create an order; retry returns one receipt and clears only the purchased cart", async () => {
   const s = setup(); const q = await s.service.quote(s.scope, s.token, s.input);
+  assert.equal(q.expectedDeliveryDate,"2099-01-03");
   assert.equal(s.counts.orders, 0);
   const placed = await s.service.place(s.scope, s.token, { quoteId: q.quoteId });
   s.cart.items = [{ offerId: createId(), quantity: 1 }];
   const retry = await s.service.place(s.scope, s.token, { quoteId: q.quoteId });
-  assert.deepEqual(retry, placed); assert.equal(s.counts.orders, 1); assert.equal(s.cart.items.length, 1);
+  assert.equal(placed.receipt.expectedDeliveryDate,q.expectedDeliveryDate); assert.deepEqual(retry, placed); assert.equal(s.counts.orders, 1); assert.equal(s.cart.items.length, 1);
   assert.equal(placed.receipt.paymentStatus, "UNPAID");
 });
-test("stale cart, expired quotes, changed prices and changed delivery slots require a new review", async () => {
+test("stale cart, expired quotes, changed prices and changed delivery coverage require a new review", async () => {
   for (const mutate of [(s) => s.cart.revision++, (s, q) => { s.rows.get(q.quoteId).expired = true; }, (s) => s.product.price++, (s) => { s.slot.closed = true; }]) {
     const s = setup(); const q = await s.service.quote(s.scope, s.token, s.input); mutate(s, q);
     await assert.rejects(s.service.place(s.scope, s.token, { quoteId: q.quoteId }), { status: 409 });

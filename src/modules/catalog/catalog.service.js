@@ -1,8 +1,31 @@
+import { readinessRows, readinessStores } from "../storefront/storefront.dao.js";
 import { AppError } from "../../core/errors/app-error.js";
 import { createId } from "../../core/identifiers/uuid.js";
 import { withTransaction } from "../../database/transaction.js";
 import * as defaultDao from "./catalog.dao.js";
 import { productMediaStorage as defaultMediaStorage } from "./product-media-storage.js";
+
+export function offerReadiness(row, published) {
+  if (!row.activeVariant) return 'INACTIVE_SKU';
+  if (!row.offerId) return 'NO_OFFER';
+  if (!row.activeOffer) return 'INACTIVE_OFFER';
+  if (row.price == null) return 'NO_PRICE';
+  if (!published) return 'NOT_PUBLISHED';
+  if (row.available == null) return 'NOT_ELIGIBLE';
+  if (row.maximum != null && row.maximum < row.minimum) return 'ORDER_LIMIT';
+  return row.available >= row.minimum ? 'READY' : 'STOCK';
+}
+
+export async function productReadiness(tenantId, productId, requestedStore, source = {findProductDetail:defaultDao.findProductDetail,readinessStores,readinessRows}) {
+  const product = await source.findProductDetail({tenantId,productId});
+  if (!product) throw appError('PRODUCT_NOT_FOUND','The product could not be found.',404);
+  const stores = await source.readinessStores({tenantId});
+  const store = requestedStore ? stores.find(item=>item.id===requestedStore) : stores[0];
+  if (requestedStore && !store) throw appError('STORE_NOT_FOUND','The active store could not be found.',404);
+  const published = product.publicationStatus==='PUBLISHED' && product.approvalStatus==='APPROVED';
+  const rows = store ? await source.readinessRows({scope:{tenantId,storeId:store.id,currency:store.currency},productId}) : [];
+  return {published,stores,storeId:store?.id??null,rows:rows.map(row=>({...row,status:offerReadiness(row,published)}))};
+}
 
 const typeTemplates = [
   { code: "GENERAL", name: "General merchandise", vertical: "GENERAL" },
@@ -244,7 +267,7 @@ export function createCatalogService({ dao = defaultDao, transaction = withTrans
           taxCategoryId: input.taxCategoryId, productCode: input.productCode, name: input.name,
           productKind: input.productKind,
           slug: `${slug(input.name)}-${input.productCode.toLowerCase()}`, shortDescription: input.shortDescription,
-          hsnSacCode: input.hsnSacCode, countryOfOrigin: input.countryOfOrigin,
+          freeDelivery: input.freeDelivery ?? false, hsnSacCode: input.hsnSacCode, countryOfOrigin: input.countryOfOrigin,
           manufacturerName: input.manufacturerName,
           isReturnable: input.isReturnable, returnWindowDays: input.isReturnable ? input.returnWindowDays : null,
           metadata: productMetadata(input.vertical, input)
@@ -508,7 +531,7 @@ export function createCatalogService({ dao = defaultDao, transaction = withTrans
         await dao.updateProduct({ product: {
           id: productId, tenantId, brandId: input.brandId, taxCategoryId: input.taxCategoryId,
           name: input.name, slug: current.slug || `${slug(input.name)}-${current.productCode.toLowerCase()}`,
-          shortDescription: input.shortDescription, hsnSacCode: input.hsnSacCode,
+          shortDescription: input.shortDescription, freeDelivery: input.freeDelivery ?? current.freeDelivery, hsnSacCode: input.hsnSacCode,
           countryOfOrigin: input.countryOfOrigin, manufacturerName: input.manufacturerName,
           isReturnable: input.isReturnable,
           returnWindowDays: input.isReturnable ? input.returnWindowDays : null,

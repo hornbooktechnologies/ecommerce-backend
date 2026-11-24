@@ -1,4 +1,5 @@
 import {specificationPredicate,listSpecificationFacets} from './specification-filters.dao.js';
+import { qualifiesForFreeDelivery } from "./free-delivery.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
 import {summaries as sellerRatingSummaries} from '../seller-ratings/seller-ratings.dao.js';
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
@@ -7,13 +8,14 @@ import {publicPhotos} from '../review-photos/review-photos.dao.js';
 // Every public query starts from an active tenant/store and eligible, dated offers.
 export async function resolveStore({ tenantCode, storeCode, connection = getPrimaryPool() }) {
   const [rows] = await connection.execute(`SELECT t.id AS tenant_id, t.display_name,
-    s.id AS store_id, s.name, s.code, s.base_currency FROM tenants t
+    s.id AS store_id, s.name, s.code, s.base_currency, s.support_email, s.support_phone FROM tenants t
     JOIN stores s ON s.tenant_id = t.id AND s.status = 'ACTIVE' AND s.deleted_at IS NULL
     WHERE t.code = ? AND t.status = 'ACTIVE' AND t.deleted_at IS NULL AND s.code = ? LIMIT 1`,
   [tenantCode, storeCode]);
   const row = rows[0];
   return row ? { tenantId: bufferToUuid(row.tenant_id), storeId: bufferToUuid(row.store_id),
-    tenantName: row.display_name, name: row.name, code: row.code, currency: row.base_currency } : null;
+    tenantName: row.display_name, name: row.name, code: row.code, currency: row.base_currency,
+    supportEmail: row.support_email || null, supportPhone: row.support_phone || null } : null;
 }
 
 const stock = `COALESCE((SELECT SUM(GREATEST(0, LEAST(
@@ -32,29 +34,8 @@ const stock = `COALESCE((SELECT SUM(GREATEST(0, LEAST(
     AND w.status = 'ACTIVE' AND w.deleted_at IS NULL
   WHERE ib.tenant_id = so.tenant_id AND ib.offer_id = so.id), 0)`;
 
-// Only internal, parameterised predicates may be passed here, never raw user SQL.
-const offersCte = (offerPredicate = "1 = 1") => `WITH RECURSIVE eligible AS (
-  SELECT so.id AS offer_id, so.tenant_id, so.merchant_id, pv.id AS variant_id, p.id AS product_id,
-    p.product_kind, pv.sku, pv.name AS variant_name, COALESCE(so.minimum_order_quantity, pv.minimum_order_quantity) AS minimum_order_quantity,
-    COALESCE(so.maximum_order_quantity, pv.maximum_order_quantity) AS maximum_order_quantity, pv.quantity_step, pv.sold_by_weight, pv.warranty_months,
-    pv.warranty_type, m.display_name AS seller_name, op.sale_price, op.list_price,
-    pl.includes_tax, u.code AS uom, ${stock} AS raw_stock
-  FROM seller_offers so
-  JOIN product_variants pv ON pv.id = so.variant_id AND pv.tenant_id = so.tenant_id
-    AND pv.status = 'ACTIVE' AND pv.deleted_at IS NULL
-  JOIN products p ON p.id = pv.product_id AND p.tenant_id = so.tenant_id
-    AND p.publication_status = 'PUBLISHED' AND p.approval_status = 'APPROVED' AND p.deleted_at IS NULL
-  JOIN product_types pt ON pt.id = p.product_type_id AND pt.tenant_id = p.tenant_id AND pt.deleted_at IS NULL
-  JOIN tenant_product_verticals tpv ON tpv.tenant_id = p.tenant_id AND tpv.vertical = pt.vertical AND tpv.status = 'ACTIVE'
-  JOIN merchants m ON m.id = so.merchant_id AND m.tenant_id = so.tenant_id AND m.deleted_at IS NULL
-    AND m.status = 'ACTIVE'
-    AND (m.merchant_type = 'FIRST_PARTY' OR (m.merchant_type = 'VENDOR' AND EXISTS (
-      SELECT 1 FROM vendor_profiles vp WHERE vp.merchant_id = m.id AND vp.tenant_id = m.tenant_id
-        AND vp.onboarding_status = 'APPROVED')))
-  JOIN store_merchants sm ON sm.store_id = so.store_id AND sm.merchant_id = so.merchant_id AND sm.status = 'ACTIVE'
-  JOIN units_of_measure u ON u.id = pv.selling_uom_id
-  JOIN offer_prices op ON op.id = (
-    SELECT current_price.id FROM offer_prices current_price
+// Used by both storefront eligibility and the admin explanation for missing prices.
+const currentPriceId = `SELECT current_price.id FROM offer_prices current_price
     JOIN price_lists current_list ON current_list.id = current_price.price_list_id
       AND current_list.tenant_id = so.tenant_id AND current_list.status = 'ACTIVE'
       AND current_list.currency = ? AND current_list.code = 'DEFAULT_INR'
@@ -64,7 +45,31 @@ const offersCte = (offerPredicate = "1 = 1") => `WITH RECURSIVE eligible AS (
     WHERE current_price.offer_id = so.id AND current_price.tenant_id = so.tenant_id
       AND (current_price.starts_at IS NULL OR current_price.starts_at <= UTC_TIMESTAMP(6))
       AND (current_price.ends_at IS NULL OR current_price.ends_at > UTC_TIMESTAMP(6))
-    ORDER BY current_price.starts_at DESC, current_price.id DESC LIMIT 1)
+    ORDER BY current_price.starts_at DESC, current_price.id DESC LIMIT 1`;
+
+// Only internal, parameterised predicates may be passed here, never raw user SQL.
+const offersCte = (offerPredicate = "1 = 1") => `WITH RECURSIVE eligible AS (
+  SELECT so.id AS offer_id, so.tenant_id, so.merchant_id, pv.id AS variant_id, p.id AS product_id,
+    p.free_delivery, delivery_tenant.free_delivery_above_inr, so.handling_time_hours, p.product_kind, pv.sku, pv.name AS variant_name, COALESCE(so.minimum_order_quantity, pv.minimum_order_quantity) AS minimum_order_quantity,
+    COALESCE(so.maximum_order_quantity, pv.maximum_order_quantity) AS maximum_order_quantity, pv.quantity_step, pv.sold_by_weight, pv.warranty_months,
+    pv.warranty_type, m.display_name AS seller_name, op.sale_price, op.list_price,
+    pl.includes_tax, u.code AS uom, ${stock} AS raw_stock
+  FROM seller_offers so
+  JOIN product_variants pv ON pv.id = so.variant_id AND pv.tenant_id = so.tenant_id
+    AND pv.status = 'ACTIVE' AND pv.deleted_at IS NULL
+  JOIN products p ON p.id = pv.product_id AND p.tenant_id = so.tenant_id
+    AND p.publication_status = 'PUBLISHED' AND p.approval_status = 'APPROVED' AND p.deleted_at IS NULL
+  JOIN product_types pt ON pt.id = p.product_type_id AND pt.tenant_id = p.tenant_id AND pt.deleted_at IS NULL
+  JOIN tenants delivery_tenant ON delivery_tenant.id = p.tenant_id
+  JOIN tenant_product_verticals tpv ON tpv.tenant_id = p.tenant_id AND tpv.vertical = pt.vertical AND tpv.status = 'ACTIVE'
+  JOIN merchants m ON m.id = so.merchant_id AND m.tenant_id = so.tenant_id AND m.deleted_at IS NULL
+    AND m.status = 'ACTIVE'
+    AND (m.merchant_type = 'FIRST_PARTY' OR (m.merchant_type = 'VENDOR' AND EXISTS (
+      SELECT 1 FROM vendor_profiles vp WHERE vp.merchant_id = m.id AND vp.tenant_id = m.tenant_id
+        AND vp.onboarding_status = 'APPROVED')))
+  JOIN store_merchants sm ON sm.store_id = so.store_id AND sm.merchant_id = so.merchant_id AND sm.status = 'ACTIVE'
+  JOIN units_of_measure u ON u.id = pv.selling_uom_id
+  JOIN offer_prices op ON op.id = (${currentPriceId})
   JOIN price_lists pl ON pl.id = op.price_list_id
   WHERE so.tenant_id = ? AND so.store_id = ? AND so.status = 'ACTIVE' AND so.deleted_at IS NULL
 ), component_tree AS (
@@ -112,7 +117,7 @@ const offersCte = (offerPredicate = "1 = 1") => `WITH RECURSIVE eligible AS (
   SELECT p.id, p.name, p.slug, p.product_code, p.short_description, p.created_at,
     p.is_returnable, p.return_window_days, pt.vertical, b.id AS brand_id, b.name AS brand_name,
     c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
-    e.offer_id, e.variant_id, e.sku, e.sale_price, e.list_price, e.available_quantity,
+    e.free_delivery, e.free_delivery_above_inr, e.offer_id, e.variant_id, e.sku, e.sale_price, e.list_price, e.available_quantity,
     (SELECT ao.display_label FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.code = 'COLOR'
       JOIN attribute_options ao ON ao.id = v.option_id WHERE v.variant_id = e.variant_id LIMIT 1) AS matched_color,
     (SELECT ao.display_label FROM variant_attribute_values v JOIN attribute_definitions ad ON ad.id = v.attribute_id AND ad.code = 'SIZE'
@@ -141,6 +146,33 @@ const offersCte = (offerPredicate = "1 = 1") => `WITH RECURSIVE eligible AS (
 )`;
 
 const scopeParams = (scope) => [scope.currency, uuidToBuffer(scope.tenantId), uuidToBuffer(scope.storeId)];
+
+export async function readinessStores({ tenantId, connection = getPrimaryPool() }) {
+  const [rows] = await connection.execute(`SELECT id, name, base_currency FROM stores
+    WHERE tenant_id=? AND status='ACTIVE' AND deleted_at IS NULL ORDER BY created_at,id`, [uuidToBuffer(tenantId)]);
+  return rows.map(row => ({id:bufferToUuid(row.id), name:row.name, currency:row.base_currency}));
+}
+
+// Start from every SKU, not just the offers that survived storefront eligibility.
+export async function readinessRows({scope, productId, connection = getPrimaryPool()}) {
+  const [rows] = await connection.query(`${offersCte()} SELECT pv.sku, pv.name, pv.status AS variant_status,
+    so.id AS offer_id, so.status AS offer_status, m.display_name, m.merchant_type,
+    op.sale_price, e.available_quantity, e.minimum_order_quantity, e.maximum_order_quantity
+    FROM product_variants pv
+    LEFT JOIN seller_offers so ON so.variant_id=pv.id AND so.tenant_id=pv.tenant_id AND so.store_id=? AND so.deleted_at IS NULL
+    LEFT JOIN merchants m ON m.id=so.merchant_id AND m.tenant_id=pv.tenant_id
+    LEFT JOIN offer_prices op ON op.id=(${currentPriceId})
+    LEFT JOIN sellable e ON e.offer_id=so.id
+    WHERE pv.tenant_id=? AND pv.product_id=? AND pv.deleted_at IS NULL
+    ORDER BY pv.sku,m.display_name,so.id`, [...scopeParams(scope),uuidToBuffer(scope.storeId),scope.currency,uuidToBuffer(scope.tenantId),uuidToBuffer(productId)]);
+  return rows.map(row => ({
+    sku:row.sku, variant:row.name, seller:row.display_name, merchantType:row.merchant_type,
+    offerId:bufferToUuid(row.offer_id), activeVariant:row.variant_status==='ACTIVE', activeOffer:row.offer_status==='ACTIVE',
+    price:row.sale_price==null?null:Number(row.sale_price), available:row.available_quantity==null?null:Number(row.available_quantity),
+    minimum:row.minimum_order_quantity==null?null:Number(row.minimum_order_quantity),
+    maximum:row.maximum_order_quantity==null?null:Number(row.maximum_order_quantity)
+  }));
+}
 export function mapProduct(row, currency) {
   return { id: bufferToUuid(row.id), slug: row.slug, productCode: row.product_code, name: row.name,
     brandId: bufferToUuid(row.brand_id), brand: row.brand_name || "", categoryId: bufferToUuid(row.category_id),
@@ -151,7 +183,7 @@ export function mapProduct(row, currency) {
     availableQuantity: Number(row.available_quantity), inStock: Number(row.available_quantity) >= Number(row.minimum_order_quantity),
     offerId: bufferToUuid(row.offer_id), variantId: bufferToUuid(row.variant_id), sku: row.sku,
     matchedColor: row.matched_color || "", matchedSize: row.matched_size || "",
-    minimumOrderQuantity: Number(row.minimum_order_quantity), quantityStep: Number(row.quantity_step),
+    freeDelivery: qualifiesForFreeDelivery(row), handlingTimeHours: Number(row.handling_time_hours || 0), minimumOrderQuantity: Number(row.minimum_order_quantity), quantityStep: Number(row.quantity_step),
     description: row.short_description || "", sellerName: row.seller_name,
     includesTax: Boolean(row.includes_tax), isReturnable: Boolean(row.is_returnable),
     returnWindowDays: Number(row.return_window_days || 0) };
@@ -308,7 +340,7 @@ export async function listVariants({ scope, productId, connection = getPrimaryPo
     size: row.size_name || "", price: Number(row.sale_price), mrp: Number(row.list_price),
     sellerId: bufferToUuid(row.merchant_id), sellerName: row.seller_name, sellerProfileHref:row.seller_profile_visible?`/sellers/${bufferToUuid(row.merchant_id)}`:null, sellerRating:sellerRatings.get(bufferToUuid(row.merchant_id))||{count:0,average:null}, includesTax: Boolean(row.includes_tax),
     availableQuantity: Number(row.available_quantity),
-    minimumOrderQuantity: Number(row.minimum_order_quantity), maximumOrderQuantity: row.maximum_order_quantity === null ? null : Number(row.maximum_order_quantity),
+    freeDelivery: qualifiesForFreeDelivery(row), handlingTimeHours: Number(row.handling_time_hours || 0), minimumOrderQuantity: Number(row.minimum_order_quantity), maximumOrderQuantity: row.maximum_order_quantity === null ? null : Number(row.maximum_order_quantity),
     quantityStep: Number(row.quantity_step), soldByWeight: Boolean(row.sold_by_weight), uom: row.uom,
     warrantyMonths: Number(row.warranty_months || 0), warrantyType: row.warranty_type }));
 }

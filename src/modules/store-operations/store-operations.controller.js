@@ -8,6 +8,8 @@ function actorContext(req) {
 export function createStoreOperationsController(service = defaultService) {
   const tenantId = (req) => req.context.tenant.tenantId;
   return {
+    async deliveryPolicy(req,res) { res.json({ data:await service.deliveryPolicy(tenantId(req)) }); },
+    async saveDeliveryPolicy(req,res) { res.json({ data:await service.saveDeliveryPolicy(tenantId(req),req.validated.body,actorContext(req)) }); },
     async list(req, res) { res.json({ data: await service.listStores(tenantId(req), req.validated.query) }); },
     async get(req, res) { res.json({ data: await service.getStore(tenantId(req), req.validated.params.storeId) }); },
     async create(req, res) { res.status(201).json({ data: await service.createStore(tenantId(req), req.validated.body, actorContext(req)) }); },

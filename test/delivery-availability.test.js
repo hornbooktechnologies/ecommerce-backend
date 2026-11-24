@@ -4,23 +4,13 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { createId, uuidToBuffer } from "../src/core/identifiers/uuid.js";
 import { createStorefrontService } from "../src/modules/storefront/storefront.service.js";
-import { describeDeliveryAvailability } from "../src/modules/storefront/delivery-availability.service.js";
+import { expectedDate, describeDeliveryAvailability } from "../src/modules/storefront/delivery-availability.service.js";
 import { deliveryAvailability } from "../src/modules/storefront/delivery-availability.dao.js";
 
-test("delivery status distinguishes unsupported, unscheduled, closed and full from bookable", () => {
-  const scenarios = [
-    [{ zones: 0 }, "UNSUPPORTED"], [{ zones: 1, scheduled: 0 }, "NOT_SCHEDULED"],
-    [{ zones: 1, scheduled: 3, bookable: 0 }, "BOOKING_CLOSED"],
-    [{ zones: 1, scheduled: 3, bookable: 2, available: 0 }, "FULL"],
-    [{ zones: 2, scheduled: 3, bookable: 2, available: 1, next_start: "2030-01-01T00:00:00Z" }, "AVAILABLE"]
-  ];
-  for (const [row, status] of scenarios) {
-    const result = describeDeliveryAvailability(row, "560001");
-    assert.equal(result.status, status); assert.equal(result.available, status === "AVAILABLE");
-    assert.equal(result.covered, status !== "UNSUPPORTED");
-    assert.equal(result.postalCode, "560001"); assert.ok(result.message.length);
-    assert.deepEqual(Object.keys(result).sort(), ["postalCode", "status", "covered", "available", "message", "nextStartsAt"].sort());
-  }
+test("calendar estimates cross IST midnight and include seller preparation", () => {
+  assert.equal(expectedDate(3,25,new Date("2026-11-24T18:30:00Z")), "2026-11-30");
+  assert.equal(describeDeliveryAvailability(null,"560001").available,false);
+  assert.equal(describeDeliveryAvailability({deliveryDays:3,deliveryFee:39},"560001").available,true);
 });
 
 test("public delivery endpoint validates PIN and resolves the active store before querying", async () => {
@@ -39,12 +29,13 @@ test("public delivery endpoint validates PIN and resolves the active store befor
   assert.equal(calls, 1);
 });
 
-test("delivery DAO binds tenant/store/PIN and uses active rules, UTC cutoff and both capacities", async () => {
-  const scope = { tenantId: createId(), storeId: createId(), postalCode: "560001" };
-  const connection = { execute: async (sql, bindings) => {
-    assert.deepEqual(bindings, [uuidToBuffer(scope.tenantId), uuidToBuffer(scope.storeId), scope.postalCode]);
-    for (const text of ["z.tenant_id = ? AND z.store_id = ?", "t.status = 'ACTIVE'", "z.status = 'ACTIVE'", "p.status = 'ACTIVE'", "INTERVAL t.cutoff_minutes MINUTE", "INTERVAL 30 DAY", "s.reserved_orders < s.order_capacity", "s.reserved_weight < s.weight_capacity"]) assert.ok(sql.includes(text));
-    return [[{ zones: 1, available: 2 }]];
-  } };
-  assert.equal((await deliveryAvailability({ ...scope, connection })).available, 2);
+test("coverage is scoped, independent of schedules and unambiguous", async () => {
+  const scope={tenantId:createId(),storeId:createId(),postalCode:"560001"};
+  let rows=[{exactPin:1,deliveryDays:3},{exactPin:0,deliveryDays:5}];
+  const connection={execute:async(sql,bindings)=>{
+    assert.deepEqual(bindings,[scope.postalCode,uuidToBuffer(scope.tenantId),uuidToBuffer(scope.storeId)]);
+    assert.doesNotMatch(sql,/delivery_slot/); return [rows];
+  }};
+  assert.equal((await deliveryAvailability({...scope,connection})).deliveryDays,3);
+  rows=[{exactPin:1},{exactPin:1}];assert.equal(await deliveryAvailability({...scope,connection}),null);
 });

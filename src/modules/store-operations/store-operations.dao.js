@@ -35,16 +35,7 @@ export async function listStores({ tenantId, search, status, page, pageSize, con
   const [rows] = await connection.execute(
     `SELECT s.*, a.line1, a.line2, a.landmark, a.city, a.state_code, a.state_name, a.postal_code,
             (SELECT COUNT(*) FROM delivery_zones dz WHERE dz.store_id = s.id) AS zone_count,
-            (SELECT COUNT(*) FROM warehouses w WHERE w.store_id = s.id AND w.deleted_at IS NULL) AS warehouse_count,
-            (SELECT COUNT(*) FROM delivery_slot_instances dsi JOIN delivery_zones dz ON dz.id = dsi.delivery_zone_id
-              WHERE dz.store_id = s.id AND dsi.slot_date >= UTC_DATE() AND dsi.status = 'OPEN') AS upcoming_slot_count,
-            (SELECT COALESCE(SUM(dsi.order_capacity), 0) FROM delivery_slot_instances dsi
-              JOIN delivery_zones dz ON dz.id = dsi.delivery_zone_id
-              WHERE dz.store_id = s.id AND dsi.slot_date BETWEEN UTC_DATE() AND DATE_ADD(UTC_DATE(), INTERVAL 7 DAY)
-                AND dsi.status = 'OPEN') AS open_capacity,
-            (SELECT COALESCE(SUM(dsi.reserved_orders), 0) FROM delivery_slot_instances dsi
-              JOIN delivery_zones dz ON dz.id = dsi.delivery_zone_id
-              WHERE dz.store_id = s.id AND dsi.slot_date BETWEEN UTC_DATE() AND DATE_ADD(UTC_DATE(), INTERVAL 7 DAY)) AS reserved_orders
+            (SELECT COUNT(*) FROM warehouses w WHERE w.store_id = s.id AND w.deleted_at IS NULL) AS warehouse_count
        FROM stores s LEFT JOIN addresses a ON a.id = s.business_address_id
       WHERE ${whereSql} ORDER BY s.status = 'ACTIVE' DESC, s.name LIMIT ? OFFSET ?`,
     [...params, pageSize, offset]
@@ -56,14 +47,12 @@ export async function listStores({ tenantId, search, status, page, pageSize, con
 export async function summarizeStores({ tenantId, connection = getPrimaryPool() }) {
   const [[row]] = await connection.execute(
     `SELECT COUNT(*) AS total_stores, SUM(s.status = 'ACTIVE') AS active_stores,
-            (SELECT COUNT(*) FROM delivery_zones dz WHERE dz.tenant_id = ? AND dz.status = 'ACTIVE') AS active_zones,
-            (SELECT COUNT(*) FROM delivery_slot_instances dsi WHERE dsi.tenant_id = ?
-              AND dsi.slot_date >= UTC_DATE() AND dsi.status = 'OPEN') AS open_slots
+            (SELECT COUNT(*) FROM delivery_zones dz WHERE dz.tenant_id = ? AND dz.status = 'ACTIVE') AS active_zones
        FROM stores s WHERE s.tenant_id = ? AND s.deleted_at IS NULL`,
-    [uuidToBuffer(tenantId), uuidToBuffer(tenantId), uuidToBuffer(tenantId)]
+    [uuidToBuffer(tenantId), uuidToBuffer(tenantId)]
   );
   return { totalStores: Number(row.total_stores || 0), activeStores: Number(row.active_stores || 0),
-    activeZones: Number(row.active_zones || 0), openSlots: Number(row.open_slots || 0) };
+    activeZones: Number(row.active_zones || 0) };
 }
 
 export async function findStore({ tenantId, storeId, connection = getPrimaryPool(), forUpdate = false }) {
@@ -80,16 +69,14 @@ export async function findStore({ tenantId, storeId, connection = getPrimaryPool
 export async function listZones({ tenantId, storeId, connection = getPrimaryPool() }) {
   const [rows] = await connection.execute(
     `SELECT dz.*,
-            GROUP_CONCAT(dzp.postal_code ORDER BY dzp.postal_code SEPARATOR ',') AS postal_codes,
-            (SELECT COUNT(*) FROM delivery_slot_templates dst WHERE dst.delivery_zone_id = dz.id) AS template_count
+            GROUP_CONCAT(dzp.postal_code ORDER BY dzp.postal_code SEPARATOR ',') AS postal_codes
        FROM delivery_zones dz LEFT JOIN delivery_zone_postal_codes dzp ON dzp.delivery_zone_id = dz.id AND dzp.status = 'ACTIVE'
       WHERE dz.tenant_id = ? AND dz.store_id = ? GROUP BY dz.id ORDER BY dz.status = 'ACTIVE' DESC, dz.name`,
     [uuidToBuffer(tenantId), uuidToBuffer(storeId)]
   );
   return rows.map((row) => ({ id: bufferToUuid(row.id), storeId: bufferToUuid(row.store_id), name: row.name,
     status: row.status, minimumOrderAmount: numeric(row.minimum_order_amount), deliveryFee: numeric(row.delivery_fee),
-    freeDeliveryThreshold: numeric(row.free_delivery_threshold), postalCodes: row.postal_codes ? row.postal_codes.split(",") : [],
-    templateCount: Number(row.template_count || 0) }));
+    deliveryDays: Number(row.delivery_days), freeDeliveryThreshold: numeric(row.free_delivery_threshold), postalCodes: row.postal_codes ? row.postal_codes.split(",") : [] }));
 }
 
 export async function listTemplates({ tenantId, storeId, connection = getPrimaryPool() }) {
@@ -207,17 +194,17 @@ export async function findZone({ tenantId, storeId, zoneId, connection, forUpdat
 
 export async function insertZone({ zone, connection }) {
   await connection.execute(
-    `INSERT INTO delivery_zones (id, tenant_id, store_id, name, status, minimum_order_amount, delivery_fee, free_delivery_threshold)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO delivery_zones (id, tenant_id, store_id, name, status, minimum_order_amount, delivery_fee, free_delivery_threshold, delivery_days)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [uuidToBuffer(zone.id), uuidToBuffer(zone.tenantId), uuidToBuffer(zone.storeId), zone.name, zone.status,
-      zone.minimumOrderAmount, zone.deliveryFee, zone.freeDeliveryThreshold]
+      zone.minimumOrderAmount, zone.deliveryFee, zone.freeDeliveryThreshold, zone.deliveryDays]
   );
 }
 
 export async function updateZone({ zoneId, input, connection }) {
   await connection.execute(
-    `UPDATE delivery_zones SET name = ?, status = ?, minimum_order_amount = ?, delivery_fee = ?, free_delivery_threshold = ? WHERE id = ?`,
-    [input.name, input.status, input.minimumOrderAmount, input.deliveryFee, input.freeDeliveryThreshold, uuidToBuffer(zoneId)]
+    `UPDATE delivery_zones SET name = ?, status = ?, minimum_order_amount = ?, delivery_fee = ?, free_delivery_threshold = ?, delivery_days = ? WHERE id = ?`,
+    [input.name, input.status, input.minimumOrderAmount, input.deliveryFee, input.freeDeliveryThreshold, input.deliveryDays, uuidToBuffer(zoneId)]
   );
 }
 
@@ -294,6 +281,14 @@ export async function assignWarehouses({ tenantId, storeId, warehouseIds, connec
       [uuidToBuffer(storeId), uuidToBuffer(tenantId), uuidToBuffer(warehouseId)]
     );
   }
+}
+
+export async function getDeliveryPolicy({ tenantId, connection = getPrimaryPool() }) {
+  const [[row]] = await connection.execute("SELECT free_delivery_above_inr FROM tenants WHERE id=?", [uuidToBuffer(tenantId)]);
+  return { aboveInr: numeric(row.free_delivery_above_inr) };
+}
+export async function setDeliveryPolicy({tenantId, aboveInr, connection}) {
+  await connection.execute("UPDATE tenants SET free_delivery_above_inr=? WHERE id=?", [aboveInr,uuidToBuffer(tenantId)]);
 }
 
 export async function insertAudit({ audit, connection }) {

@@ -5,15 +5,24 @@ import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
 const number = (value) => value === null || value === undefined ? 0 : Number(value);
 const iso = (value) => value ? new Date(value).toISOString() : null;
 
-export async function getDashboardOverview({ tenantId, connection = getPrimaryPool() }) {
+// Midnight IST expressed in UTC, the time basis of stored order timestamps.
+const istOffsetMinutes = 330;
+export function dashboardDayStartUtc(now = new Date()) {
+  const shifted = new Date(now.getTime() + istOffsetMinutes * 60_000);
+  shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - istOffsetMinutes * 60_000);
+}
+
+export async function getDashboardOverview({ tenantId, connection = getPrimaryPool(), now = new Date() }) {
   const tenant = uuidToBuffer(tenantId);
+  const start = dashboardDayStartUtc(now);
   const [metricResult, trendResult, mixResult, queueResult, activityResult] = await Promise.all([
     connection.execute(
       `SELECT
         (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
-          AND co.created_at >= UTC_DATE() AND co.status <> 'DRAFT') AS orders_today,
+          AND co.created_at >= ? AND co.created_at < DATE_ADD(?, INTERVAL 1 DAY) AND co.status <> 'DRAFT') AS orders_today,
         (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
-          AND co.created_at >= DATE_SUB(UTC_DATE(), INTERVAL 1 DAY) AND co.created_at < UTC_DATE()
+          AND co.created_at >= DATE_SUB(?, INTERVAL 1 DAY) AND co.created_at < ?
           AND co.status <> 'DRAFT') AS orders_yesterday,
         (SELECT COUNT(*) FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
           AND co.status NOT IN ('DRAFT','CANCELLED','COMPLETED')
@@ -25,25 +34,22 @@ export async function getDashboardOverview({ tenantId, connection = getPrimaryPo
           AND m.status = 'PENDING' AND m.deleted_at IS NULL) AS pending_vendors,
         (SELECT COUNT(*) FROM return_requests rr JOIN customer_orders co ON co.tenant_id=rr.tenant_id AND co.id=rr.customer_order_id WHERE rr.tenant_id = ? AND ${businessCustomer()} AND rr.status = 'REQUESTED') AS pending_returns,
         (SELECT COALESCE(SUM(co.grand_total), 0) FROM customer_orders co WHERE co.tenant_id = ? AND ${businessCustomer()}
-          AND co.created_at >= DATE_SUB(UTC_DATE(), INTERVAL 29 DAY)
+          AND co.created_at >= DATE_SUB(?, INTERVAL 29 DAY) AND co.created_at < DATE_ADD(?, INTERVAL 1 DAY)
           AND co.status NOT IN ('DRAFT','CANCELLED')) AS revenue_30d`,
-      [tenant, tenant, tenant, tenant, tenant, tenant, tenant]
+      [tenant, start, start, tenant, start, start, tenant, tenant, tenant, tenant, tenant, start, start]
     ),
     connection.execute(
-      `SELECT calendar.day,
+      `SELECT DATE_FORMAT(DATE_ADD(calendar.start_utc, INTERVAL ${istOffsetMinutes} MINUTE), '%Y-%m-%d') AS day,
               COUNT(co.id) AS order_count,
               COALESCE(SUM(CASE WHEN co.status NOT IN ('DRAFT','CANCELLED') THEN co.grand_total ELSE 0 END), 0) AS revenue
          FROM (
-           SELECT DATE_SUB(UTC_DATE(), INTERVAL 6 DAY) AS day UNION ALL
-           SELECT DATE_SUB(UTC_DATE(), INTERVAL 5 DAY) UNION ALL
-           SELECT DATE_SUB(UTC_DATE(), INTERVAL 4 DAY) UNION ALL
-           SELECT DATE_SUB(UTC_DATE(), INTERVAL 3 DAY) UNION ALL
-           SELECT DATE_SUB(UTC_DATE(), INTERVAL 2 DAY) UNION ALL
-           SELECT DATE_SUB(UTC_DATE(), INTERVAL 1 DAY) UNION ALL
-           SELECT UTC_DATE()
+           SELECT DATE_SUB(CAST(? AS DATETIME), INTERVAL offsets.n DAY) AS start_utc
+           FROM (SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3
+             UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6) offsets
          ) calendar
-         LEFT JOIN customer_orders co ON co.tenant_id = ? AND DATE(co.created_at) = calendar.day AND co.status <> 'DRAFT' AND ${businessCustomer()}
-        GROUP BY calendar.day ORDER BY calendar.day`, [tenant]
+         LEFT JOIN customer_orders co ON co.tenant_id = ? AND co.created_at >= calendar.start_utc
+           AND co.created_at < DATE_ADD(calendar.start_utc, INTERVAL 1 DAY) AND co.status <> 'DRAFT' AND ${businessCustomer()}
+        GROUP BY calendar.start_utc ORDER BY calendar.start_utc`, [start, tenant]
     ),
     connection.execute(
       `SELECT status_group, COUNT(*) AS total FROM (
@@ -106,7 +112,7 @@ export async function getDashboardOverview({ tenantId, connection = getPrimaryPo
       revenue30d: number(metrics.revenue_30d)
     },
     salesTrend: trendResult[0].map((row) => ({
-      date: new Date(row.day).toISOString().slice(0, 10), orders: number(row.order_count), revenue: number(row.revenue)
+      date: row.day, orders: number(row.order_count), revenue: number(row.revenue)
     })),
     orderMix: mixResult[0].map((row) => ({ label: row.status_group, value: number(row.total) })),
     queue: queueResult[0].map((row, index) => ({ id: `${row.item_type}-${row.reference}-${index}`,

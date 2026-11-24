@@ -47,6 +47,24 @@ test("public hero excludes drafts and disabled slides, preserves order and check
   assert.deepEqual(disabled.slides, []);
 });
 
+test("sale announcements preserve regular slides and respect inclusive start and exclusive end", async () => {
+  const saleEvent = { startsAt: "2026-11-20T09:00:00+05:30", endsAt: "2026-11-21T21:00:00+05:30" };
+  const event = { ...slide, productSlug: "", href: "/products", title: "End of Season Sale", saleEvent };
+  const regular = { ...event, saleEvent: undefined, id: tenantId, title: "Autumn edit" };
+  const published = { ...document, slides: [event, regular] };
+  assert.ifError(saveHeroSchema.validate({ revision: 0, document: published }).error);
+  assert.ok(saveHeroSchema.validate({ revision: 0, document: { ...document, slides: [
+    { ...event, saleEvent: { ...saleEvent, endsAt: saleEvent.startsAt } }
+  ] } }).error);
+  const dao = { readHero: async () => ({ published }) };
+  const start = Date.parse(saleEvent.startsAt), end = Date.parse(saleEvent.endsAt);
+  for (const [now, visible] of [[start - 1, false], [start, true], [end - 1, true], [end, false]]) {
+    const result = await publicHero(scope, { dao, now });
+    assert.deepEqual(result.slides.map(s => s.title), visible ? [event.title, regular.title] : [regular.title]);
+    if (visible) assert.deepEqual(result.slides[0].saleEvent, saleEvent);
+  }
+});
+
 function fixture({ exists = true, owned = true, product = { name: "Shirt", image: "https://example.com/shirt.jpg" } } = {}) {
   let row = null; const audits = [];
   const service = createHomepageService({
@@ -93,6 +111,35 @@ test("hero DAO scopes reads by both tenant and store with parameterized SQL", as
   await readHero({ ...scope, connection: { execute: async (sql, params) => {
     assert.match(sql, /tenant_id = \? AND store_id = \?/); assert.equal(params.length, 2); return [[]];
   } } });
+});
+
+test("publishing a disabled sale restores products without exposing sale data; hero off wins", async () => {
+  const { service } = fixture();
+  const saved = await service.save(tenantId, storeId, { revision: 0, document: {
+    ...document, slides: [{ ...slide, enabled: false, saleEvent: { startsAt: null, endsAt: null } }]
+  } }, {});
+  const read = () => publicHero(scope, { dao: { readHero: () => service.get(tenantId, storeId) } });
+  assert.equal(await read(), null);
+  const published = await service.save(tenantId, storeId, { revision: saved.revision }, {}, true);
+  assert.equal((await read()).fallbackToProducts, true);
+  assert.deepEqual((await read()).slides, []);
+  const off = await service.save(tenantId, storeId, { revision: published.revision,
+    document: { ...published.draft, enabled: false } }, {});
+  await service.save(tenantId, storeId, { revision: off.revision }, {}, true);
+  assert.equal((await read()).enabled, false);
+  assert.ok(!(await read()).fallbackToProducts);
+});
+
+test("a sale-only schedule keeps the product fallback before, during and after the window", async () => {
+  const saleEvent = { startsAt: "2026-11-20T09:00:00Z", endsAt: "2026-11-20T10:00:00Z" };
+  const dao = { readHero: async () => ({ published: { ...document, slides: [
+    { ...slide, saleEvent, productSlug: "", href: "/products" }
+  ] } }) };
+  for (const [now, count] of [[Date.parse(saleEvent.startsAt)-1,0],[Date.parse(saleEvent.startsAt),1],[Date.parse(saleEvent.endsAt),0]]) {
+    const result = await publicHero(scope, { dao, now });
+    assert.equal(result.fallbackToProducts, true);
+    assert.equal(result.slides.length, count);
+  }
 });
 test("admin routes require authentication, store permissions and valid input", async () => {
   const base = `/api/admin/v1/stores/${storeId}/homepage-hero`;

@@ -48,6 +48,9 @@ export function createStoreContentService({ dao = defaultDao, transaction = with
         if (!current) fail("CONTENT_DRAFT_REQUIRED", "Save a draft before publishing this page.", 409);
         if (action === "publish") {
           if (!current.draft.body.trim()) fail("CONTENT_BODY_REQUIRED", "Add approved page content before publishing.", 422);
+          if (pageKey.startsWith("FAQ_") && current.draft.body.trim().split(/\n\s*\n/).some(block => !block.trim().includes("\n"))) {
+            fail("FAQ_ANSWER_REQUIRED", "Give each question an answer on the next line. Leave a blank line between questions.", 422);
+          }
           await dao.publish({ ...scope, actorUserId: context.actorUserId });
         } else {
           if (!current.published) return workspace(pageKey, current, store);

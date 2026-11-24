@@ -9,6 +9,8 @@ import {collectionForLink} from './collections.service.js';
 
 export const emptyHero = () => ({ enabled: true, autoplay: true, intervalSeconds: 6, slides: [] });
 const fail = (code, message, status = 422) => { throw new AppError({ code, message, status }); };
+// A sale is temporary: even its all-disabled draft has a valid destination after publish.
+const hasSaleAnnouncement = slides => slides.some(slide => Boolean(slide.saleEvent));
 
 export function createHomepageService({ dao = defaultDao, storeDao = stores, catalogDao = catalog,
   storage = productMediaStorage, transaction = withTransaction } = {}) {
@@ -18,7 +20,7 @@ export function createHomepageService({ dao = defaultDao, storeDao = stores, cat
     return { tenantId, storeId, currency: store.baseCurrency };
   }
   async function validateContent(scope, document, connection, publishing) {
-    if (publishing && document.enabled && !document.slides.some((slide) => slide.enabled)) {
+    if (publishing && document.enabled && !document.slides.some((slide) => slide.enabled) && !hasSaleAnnouncement(document.slides)) {
       fail("HERO_SLIDE_REQUIRED", "Add an enabled slide or turn off the hero before publishing.");
     }
     for (const [index, slide] of document.slides.entries()) {
@@ -88,21 +90,23 @@ export function createHomepageService({ dao = defaultDao, storeDao = stores, cat
 }
 
 // Only published content is public. Resolve linked products afresh, never snapshot prices/stock.
-export async function publicHero(scope, { dao = defaultDao, catalogDao = catalog } = {}) {
+export async function publicHero(scope, { dao = defaultDao, catalogDao = catalog, now = Date.now() } = {}) {
   const row = await dao.readHero(scope);
   if (!row?.published) return null;
   const { enabled, autoplay, intervalSeconds, slides } = row.published;
   if (!enabled) return { enabled: false, autoplay, intervalSeconds, slides: [] };
-  const visible = await Promise.all(slides.filter((slide) => slide.enabled).map(async (slide) => {
+  const visible = await Promise.all(slides.filter((slide) => slide.enabled
+    && (!slide.saleEvent?.startsAt || Date.parse(slide.saleEvent.startsAt) <= now)
+    && (!slide.saleEvent?.endsAt || now < Date.parse(slide.saleEvent.endsAt))).map(async (slide) => {
     if(!slide.productSlug&&!await collectionForLink(scope,slide.href,{live:true}))return null;
     const product = slide.productSlug ? await catalogDao.findProduct({ scope, slug: slide.productSlug }) : null;
     if (slide.productSlug && !product) return null;
-    return { id: slide.id, eyebrow: slide.eyebrow, title: slide.title || product?.name,
+    return { id: slide.id, ...(slide.saleEvent ? { saleEvent: slide.saleEvent } : {}), eyebrow: slide.eyebrow, title: slide.title || product?.name,
       description: slide.description || product?.description || "", imageUrl: slide.imageUrl || product?.image,
       altText: slide.altText || product?.name || slide.title,
       href: product ? `/p/${product.slug}` : slide.href, ctaLabel: slide.ctaLabel, tone: slide.tone,
       product: product ? { name: product.name, brand: product.brand, price: product.price, mrp: product.mrp,
         inStock: product.inStock } : null, showPrice: slide.showPrice };
   }));
-  return { enabled, autoplay, intervalSeconds, slides: visible.filter(Boolean) };
+  return { enabled, autoplay, intervalSeconds, fallbackToProducts: hasSaleAnnouncement(slides), slides: visible.filter(Boolean) };
 }

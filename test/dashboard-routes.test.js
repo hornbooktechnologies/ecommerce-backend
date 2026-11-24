@@ -4,6 +4,13 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { createAccessToken } from "../src/core/security/tokens.js";
 
+import { dashboardDayStartUtc } from "../src/modules/dashboard/dashboard.dao.js";
+
+test("India reporting day changes at 18:30 UTC, including at New Year", () => {
+  assert.equal(dashboardDayStartUtc(new Date("2026-12-31T18:29:59.999Z")).toISOString(), "2026-12-30T18:30:00.000Z");
+  assert.equal(dashboardDayStartUtc(new Date("2026-12-31T18:30:00.000Z")).toISOString(), "2026-12-31T18:30:00.000Z");
+});
+
 const tenantId = "018f47f2-6b6d-7c34-ae31-8f4f17b79b88";
 const token = createAccessToken({ userId: "018f47f2-6b6d-7c34-ae31-8f4f17b79b77",
   sessionId: "018f47f2-6b6d-7c34-ae31-8f4f17b79baa" });

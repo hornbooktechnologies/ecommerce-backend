@@ -5,6 +5,10 @@ import { messages } from "./order-notifications.events.js";
 const oneLine = (value) => String(value || "").replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, " ").trim();
 export function notificationMessage(job, recipient, settings) {
   const [title, explanation] = messages[job.payload.kind];
+  const purchase = job.payload.kind === "ORDER_RECEIVED";
+  const total = purchase && recipient.total != null && Number.isFinite(Number(recipient.total))
+    ? new Intl.NumberFormat("en-IN", { style: "currency", currency: recipient.currency || "INR" }).format(Number(recipient.total)) : "";
+  const method = purchase && ({ COD: "Cash on delivery", ONLINE_TEST: "Razorpay test mode (no real charge)" })[recipient.paymentMethod];
   return {
     from: settings.from,
     to: { address: recipient.email },
@@ -13,8 +17,9 @@ export function notificationMessage(job, recipient, settings) {
     subject: `${oneLine(recipient.storeName)}: ${title} — ${oneLine(recipient.orderNumber)}`,
     text: `${title}\n\nStore: ${oneLine(recipient.storeName)}\nOrder: ${oneLine(recipient.orderNumber)}`
       + (recipient.returnNumber ? `\nCase: ${oneLine(recipient.returnNumber)}` : "")
+      + (total ? `\nOrder total: ${total}` : "") + (method ? `\nPayment method: ${method}` : "")
       + `\n\n${explanation}\n\nThis email reports a recorded update. For the latest status, sign in to My Orders:\n`
-      + `${settings.origin}/account/orders\n\nIf you need help, contact the store through its website.`
+      + `${settings.origin}/account/orders/${encodeURIComponent(job.payload.orderId)}\n\nHelp & support: ${settings.origin}/help`
   };
 }
 

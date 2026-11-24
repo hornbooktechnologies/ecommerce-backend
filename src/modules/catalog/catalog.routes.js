@@ -1,3 +1,4 @@
+import { readinessQuery } from "./catalog.validators.js";
 import { raw, Router } from "express";
 import { authenticate } from "../auth/auth.middleware.js";
 import { requirePermission, resolveTenantAccess } from "../access-control/access-control.middleware.js";
@@ -30,6 +31,8 @@ export function createCatalogRouter({
     validateParams(masterItemSchema), validateBody(updateMasterSchema), controller.updateMaster);
   router.get("/catalog/products", authorize("catalog.product.read"), validateQuery(listProductsSchema), controller.listProducts);
   router.post("/catalog/products", authorize("catalog.product.create"), validateBody(createProductSchema), controller.createProduct);
+  router.get("/catalog/products/:productId/readiness", authorize("catalog.product.read"),
+    validateParams(productItemSchema), validateQuery(readinessQuery), controller.productReadiness);
   router.get("/catalog/products/:productId/variants", authorize("catalog.product.read"),
     validateParams(productItemSchema), controller.getProductVariants);
   router.get("/catalog/products/:productId/media", authorize("catalog.product.read"),

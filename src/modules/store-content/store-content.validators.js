@@ -3,6 +3,9 @@ import { AppError } from "../../core/errors/app-error.js";
 
 export const pageDefinitions = Object.freeze([
   { key: "ABOUT", slug: "about", label: "About us" },
+  { key: "FAQ_EN", slug: "faq-en", label: "Help FAQs · English" },
+  { key: "FAQ_HI", slug: "faq-hi", label: "Help FAQs · हिन्दी" },
+  { key: "FAQ_GU", slug: "faq-gu", label: "Help FAQs · ગુજરાતી" },
   { key: "CONTACT", slug: "contact", label: "Contact us" },
   { key: "SHIPPING", slug: "shipping", label: "Shipping information" },
   { key: "RETURNS", slug: "returns", label: "Returns & cancellation" },

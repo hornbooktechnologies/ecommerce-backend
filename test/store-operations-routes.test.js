@@ -65,19 +65,18 @@ test("delivery zone validates and forwards PIN coverage", async () => {
   });
   assert.equal(response.status, 201);
   assert.equal(received.deliveryFee, 39);
+  assert.equal(received.deliveryDays,3);
   assert.deepEqual(received.postalCodes, ["560001", "560025"]);
 });
 
-test("weekly slot rejects an end time before its start time", async () => {
-  const response = await request(app()).post(`/api/admin/v1/stores/${storeId}/slots`)
-    .set("authorization", `Bearer ${token}`).send({ zoneId, name: "Invalid window", dayOfWeek: 1,
-      startTime: "18:00", endTime: "08:00", orderCapacity: 20 });
-  assert.equal(response.status, 422);
-  assert.equal(response.body.error.code, "VALIDATION_FAILED");
+test("slot schedule and generation routes are retired", async () => {
+  for(const suffix of ["slots","slots/generate"]) {
+    const result = await request(app()).post(`/api/admin/v1/stores/${storeId}/${suffix}`).set("authorization", `Bearer ${token}`).send({});
+    assert.equal(result.status,404);
+  }
 });
-
-test("slot generation enforces a safe planning horizon", async () => {
-  const response = await request(app()).post(`/api/admin/v1/stores/${storeId}/slots/generate`)
-    .set("authorization", `Bearer ${token}`).send({ days: 90 });
-  assert.equal(response.status, 422);
+test("a manager can change transit days but cannot configure a negative estimate", async () => {
+  const save = days => request(app()).patch(`/api/admin/v1/stores/${storeId}/zones/${zoneId}`).set("authorization", `Bearer ${token}`).send({name:"Central",postalCodes:["560001"],deliveryDays:days});
+  assert.equal((await save(5)).status,200);
+  assert.equal((await save(-1)).status,422);
 });

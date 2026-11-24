@@ -342,14 +342,14 @@ export async function insertProduct({ product, connection }) {
     `INSERT INTO products (id, tenant_id, product_type_id, brand_id, tax_category_id,
        product_code, name, slug, short_description, product_kind, approval_status,
        publication_status, hsn_sac_code, country_of_origin, manufacturer_name, is_returnable,
-       return_window_days, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 'DRAFT', ?, ?, ?, ?, ?, ?)`,
+       return_window_days, metadata, free_delivery)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 'DRAFT', ?, ?, ?, ?, ?, ?, ?)`,
     [uuidToBuffer(product.id), uuidToBuffer(product.tenantId), uuidToBuffer(product.productTypeId),
       product.brandId ? uuidToBuffer(product.brandId) : null,
       product.taxCategoryId ? uuidToBuffer(product.taxCategoryId) : null,
       product.productCode, product.name, product.slug, product.shortDescription || null, product.productKind || "STANDARD",
       product.hsnSacCode || null, product.countryOfOrigin, product.manufacturerName || null, product.isReturnable,
-      product.returnWindowDays, JSON.stringify(product.metadata || {})]
+      product.returnWindowDays, JSON.stringify(product.metadata || {}), product.freeDelivery ? 1 : 0]
   );
 }
 
@@ -516,7 +516,7 @@ export async function findProductSummary({ tenantId, productId, connection = get
 export async function findProductDetail({ tenantId, productId, connection = getPrimaryPool(), forUpdate = false }) {
   const [rows] = await connection.execute(
     `SELECT p.id, p.product_code, p.name, p.slug, p.product_kind, p.short_description, p.approval_status,
-            p.publication_status, p.approval_note, p.brand_id, p.tax_category_id, p.hsn_sac_code,
+            p.publication_status, p.free_delivery, p.approval_note, p.brand_id, p.tax_category_id, p.hsn_sac_code,
             p.country_of_origin, p.manufacturer_name, p.is_returnable,
             p.return_window_days, p.metadata, pt.vertical,
             (SELECT pc.category_id FROM product_categories pc
@@ -535,7 +535,7 @@ export async function findProductDetail({ tenantId, productId, connection = getP
     slug: row.slug, productKind: row.product_kind,
     shortDescription: row.short_description || "", vertical: row.vertical,
     brandId: bufferToUuid(row.brand_id), categoryId: bufferToUuid(row.category_id),
-    taxCategoryId: bufferToUuid(row.tax_category_id), hsnSacCode: row.hsn_sac_code || "",
+    taxCategoryId: bufferToUuid(row.tax_category_id), freeDelivery: Boolean(row.free_delivery), hsnSacCode: row.hsn_sac_code || "",
     countryOfOrigin: row.country_of_origin || "IN", manufacturerName: row.manufacturer_name || "",
     isReturnable: Boolean(row.is_returnable), returnWindowDays: number(row.return_window_days),
     approvalStatus: row.approval_status, publicationStatus: row.publication_status,
@@ -628,13 +628,13 @@ export async function updateProduct({ product, connection }) {
     `UPDATE products
         SET brand_id = ?, tax_category_id = ?, name = ?, slug = ?, short_description = ?,
             hsn_sac_code = ?, country_of_origin = ?, manufacturer_name = ?,
-            is_returnable = ?, return_window_days = ?, metadata = ?
+            is_returnable = ?, return_window_days = ?, metadata = ?, free_delivery = ?
       WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL`,
     [product.brandId ? uuidToBuffer(product.brandId) : null,
       product.taxCategoryId ? uuidToBuffer(product.taxCategoryId) : null,
       product.name, product.slug, product.shortDescription || null, product.hsnSacCode || null,
       product.countryOfOrigin, product.manufacturerName || null, product.isReturnable,
-      product.returnWindowDays, JSON.stringify(product.metadata || {}),
+      product.returnWindowDays, JSON.stringify(product.metadata || {}), product.freeDelivery ? 1 : 0,
       uuidToBuffer(product.tenantId), uuidToBuffer(product.id)]
   );
   return result.affectedRows;

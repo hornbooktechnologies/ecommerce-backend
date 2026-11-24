@@ -35,12 +35,11 @@ export function createStoreOperationsService({ dao = defaultDao, transaction = w
   async function getStore(tenantId, storeId) {
     const store = await dao.findStore({ tenantId, storeId });
     if (!store) fail("STORE_NOT_FOUND", "Store was not found.", 404);
-    const [zones, templates, instances, warehouses] = await Promise.all([
-      dao.listZones({ tenantId, storeId }), dao.listTemplates({ tenantId, storeId }),
-      dao.listUpcomingInstances({ tenantId, storeId, days: store.slotHorizonDays }),
+    const [zones, warehouses] = await Promise.all([
+      dao.listZones({ tenantId, storeId }),
       dao.listWarehouses({ tenantId, storeId })
     ]);
-    return { store, zones, templates, instances, warehouses };
+    return { store, zones, warehouses };
   }
 
   async function createStore(tenantId, input, context) {
@@ -169,6 +168,13 @@ export function createStoreOperationsService({ dao = defaultDao, transaction = w
   }
 
   return { listStores, getStore, createStore, updateStore,
+    deliveryPolicy: tenantId => dao.getDeliveryPolicy({tenantId}),
+    saveDeliveryPolicy: (tenantId,{aboveInr},context) => transaction(tenantId,async connection=>{
+      await dao.setDeliveryPolicy({tenantId,aboveInr,connection});
+      await dao.insertAudit({audit:{id:createId(),tenantId,actorUserId:context.actorUserId,entityType:"TENANT",entityId:tenantId,
+        action:"PRODUCT_DELIVERY_POLICY_UPDATED",...auditContext(context),afterData:{aboveInr}},connection});
+      return {aboveInr};
+    }),
     createZone: (tenantId, storeId, input, context) => saveZone(tenantId, storeId, null, input, context),
     updateZone: (tenantId, storeId, zoneId, input, context) => saveZone(tenantId, storeId, zoneId, input, context),
     createTemplate: (tenantId, storeId, input, context) => saveTemplate(tenantId, storeId, null, input, context),
@@ -177,5 +183,5 @@ export function createStoreOperationsService({ dao = defaultDao, transaction = w
 }
 
 const service = createStoreOperationsService();
-export const { listStores, getStore, createStore, updateStore, createZone, updateZone,
+export const { deliveryPolicy, saveDeliveryPolicy, listStores, getStore, createStore, updateStore, createZone, updateZone,
   createTemplate, updateTemplate, generateSlots, assignWarehouses } = service;

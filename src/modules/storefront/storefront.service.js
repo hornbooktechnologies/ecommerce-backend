@@ -44,7 +44,7 @@ export function createStorefrontService({ dao = defaultDao, media = listProductM
     async configuration(input) {
       const scope = await resolve(input);
       const [facets, homepageHero, homepageSections, localizationSettings] = await Promise.all([dao.listFacets({ scope }), hero(scope), sections(scope), localization(scope)]);
-      return { store: { name: scope.name, tenantName: scope.tenantName, code: scope.code, currency: scope.currency }, ...facets, hero: homepageHero, homepageSections,
+      return { store: { name: scope.name, tenantName: scope.tenantName, code: scope.code, currency: scope.currency, supportEmail: scope.supportEmail, supportPhone: scope.supportPhone }, ...facets, hero: homepageHero, homepageSections,
         localization:localizationSettings, appearance: resolveAppearance('storefront', scope.tenantId, scope.storeId) };
     },
     async detail(input, slug) {

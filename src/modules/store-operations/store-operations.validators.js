@@ -5,6 +5,7 @@ const uuid = Joi.string().guid({ version: ["uuidv4", "uuidv5", "uuidv7"] });
 const status = Joi.string().uppercase().valid("ACTIVE", "INACTIVE");
 const money = Joi.number().precision(4).min(0).allow(null);
 
+export const deliveryPolicySchema = Joi.object({ aboveInr:Joi.number().min(0).max(9999999999.99).precision(2).allow(null).required() }).required();
 export const storeParamsSchema = Joi.object({ storeId: uuid.required() }).required();
 export const zoneParamsSchema = Joi.object({ storeId: uuid.required(), zoneId: uuid.required() }).required();
 export const templateParamsSchema = Joi.object({ storeId: uuid.required(), templateId: uuid.required() }).required();
@@ -46,6 +47,7 @@ export const zoneSchema = Joi.object({
   status: status.default("ACTIVE"),
   minimumOrderAmount: money.default(null),
   deliveryFee: money.default(0),
+  deliveryDays: Joi.number().integer().min(0).max(90).default(3),
   freeDeliveryThreshold: money.default(null),
   postalCodes: Joi.array().items(Joi.string().trim().pattern(/^\d{6}$/)).unique().min(1).max(100).required()
 }).required();

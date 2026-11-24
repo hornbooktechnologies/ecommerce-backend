@@ -1,6 +1,13 @@
 import "dotenv/config";
 
 export const queueName = "customer-order-email";
+// Only these milestones run alongside the API. A separately managed worker can
+// still deliver other configured notifications, such as shipment dispatch.
+export const automaticOrderEmailKinds = Object.freeze([
+  "ORDER_RECEIVED", "ORDER_CANCELLED", "SHIPMENT_DELIVERED",
+  "RETURN_REQUESTED", "RETURN_APPROVED", "RETURN_REJECTED",
+  "RETURN_RECEIVED", "RETURN_INSPECTED", "RETURN_COMPLETED"
+]);
 export const enabled = () => process.env.ORDER_EMAILS_ENABLED === "true";
 
 // Deliberately do not replay historical outbox events when this feature is enabled.

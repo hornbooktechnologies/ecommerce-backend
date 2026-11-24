@@ -1,20 +1,18 @@
 import { deliveryAvailability } from "./delivery-availability.dao.js";
 
-const messages = {
-  AVAILABLE: "Delivery slots are available for this PIN code. Choose a slot at checkout.",
-  UNSUPPORTED: "This store does not currently deliver to this PIN code. Try another delivery address.",
-  NOT_SCHEDULED: "This area is covered, but no delivery slots are scheduled in the next 30 days. Please check again later or contact the store.",
-  BOOKING_CLOSED: "This area is covered, but booking is closed for the upcoming slots. Please check again later or try another delivery address.",
-  FULL: "This area is covered, but all currently bookable delivery slots are full. Please check again later or try another delivery address."
-};
-
-export function describeDeliveryAvailability(row, postalCode) {
-  const status = Number(row.available) > 0 ? "AVAILABLE" : !Number(row.zones) ? "UNSUPPORTED"
-    : !Number(row.scheduled) ? "NOT_SCHEDULED" : !Number(row.bookable) ? "BOOKING_CLOSED" : "FULL";
-  return { postalCode, status, covered: Number(row.zones) > 0, available: status === "AVAILABLE", message: messages[status],
-    nextStartsAt: status === "AVAILABLE" && row.next_start ? new Date(row.next_start).toISOString() : null };
+// Work with date-only values in the store's Indian calendar, independent of the server timezone.
+export function expectedDate(deliveryDays, handlingHours = 0, now = new Date()) {
+  const days = Number(deliveryDays) + Math.ceil(Number(handlingHours || 0) / 24);
+  return new Date(now.getTime() + 330 * 60000 + days * 86400000).toISOString().slice(0, 10);
 }
-
+export function describeDeliveryAvailability(zone, postalCode, handlingHours = 0) {
+  if (!zone) return { postalCode, available:false, covered:false, status:'UNSUPPORTED',
+    message:'Delivery is not available for this PIN code.', expectedDeliveryDate:null };
+  return { postalCode, available:true, covered:true, status:'AVAILABLE', message:'Delivery available',
+    expectedDeliveryDate:expectedDate(zone.deliveryDays, handlingHours), deliveryFee:Number(zone.deliveryFee),
+    minimumOrderAmount:Number(zone.minimumOrderAmount || 0),
+    freeDeliveryThreshold:zone.freeDeliveryThreshold == null ? null : Number(zone.freeDeliveryThreshold) };
+}
 export async function checkDeliveryAvailability(input) {
-  return describeDeliveryAvailability(await deliveryAvailability(input), input.postalCode);
+  return describeDeliveryAvailability(await deliveryAvailability(input), input.postalCode, input.handlingHours);
 }

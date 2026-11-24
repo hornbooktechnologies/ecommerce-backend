@@ -1,9 +1,9 @@
 import { getPrimaryPool } from "../../database/pool-factory.js";
 import { createId, uuidToBuffer as id, bufferToUuid as uuid } from "../../core/identifiers/uuid.js";
-import { enabled, messages, orderNotification, queueName } from "./order-notifications.events.js";
+import { automaticOrderEmailKinds, enabled, messages, orderNotification, queueName } from "./order-notifications.events.js";
 import { enqueueOrderInbox, enqueueReturnInbox } from "./inbox.events.js";
 
-const recipientQuery = `SELECT o.customer_id, o.order_number, a.email,
+const recipientQuery = `SELECT o.customer_id, o.order_number, o.currency, o.grand_total, o.payment_method, a.email,
   t.code AS tenant_code, t.display_name AS tenant_name, s.code AS store_code, s.name AS store_name
   FROM customer_orders o
   JOIN tenants t ON t.id = o.tenant_id AND t.status = 'ACTIVE' AND t.deleted_at IS NULL
@@ -50,6 +50,7 @@ export async function recipient(job, connection = getPrimaryPool()) {
     returnNumber = request.return_number;
   }
   return { email: row.email, orderNumber: row.order_number, returnNumber,
+    currency: row.currency, total: row.grand_total, paymentMethod: row.payment_method,
     tenantCode: row.tenant_code, tenantName: row.tenant_name, storeCode: row.store_code, storeName: row.store_name };
 }
 
@@ -67,7 +68,8 @@ async function inTransaction(pool, operation) {
 }
 
 // Atomic ordered UPDATE is supported by MariaDB 10.4; no SKIP LOCKED required.
-export async function claim(workerId, pool = getPrimaryPool()) {
+export async function claim(workerId, pool = getPrimaryPool(), automaticOnly = false) {
+  const filter = automaticOnly ? `AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.kind')) IN (${automaticOrderEmailKinds.map(() => "?").join(",")})` : "";
   return inTransaction(pool, async (connection) => {
     await connection.execute(`UPDATE background_job_attempts a JOIN background_jobs j ON j.id = a.job_id
       SET a.status = 'FAILED', a.completed_at = UTC_TIMESTAMP(6), a.error_message = 'LEASE_EXPIRED'
@@ -81,9 +83,9 @@ export async function claim(workerId, pool = getPrimaryPool()) {
     const [result] = await connection.execute(`UPDATE background_jobs SET status = 'RUNNING',
       claim_token = ?, locked_by = ?, locked_at = UTC_TIMESTAMP(6),
       lock_expires_at = DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 2 MINUTE), attempt_count = attempt_count + 1
-      WHERE queue_name = ? AND attempt_count < max_attempts AND
+      WHERE queue_name = ? AND attempt_count < max_attempts ${filter} AND
       ((status = 'QUEUED' AND run_at <= UTC_TIMESTAMP(6)) OR (status = 'RUNNING' AND lock_expires_at <= UTC_TIMESTAMP(6)))
-      ORDER BY priority DESC, created_at, id LIMIT 1`, [id(token), workerId, queueName]);
+      ORDER BY priority DESC, created_at, id LIMIT 1`, [id(token), workerId, queueName, ...(automaticOnly ? automaticOrderEmailKinds : [])]);
     if (!result.affectedRows) return null;
     const [[row]] = await connection.execute("SELECT * FROM background_jobs WHERE claim_token = ?", [id(token)]);
     await connection.execute(`UPDATE background_job_attempts SET status = 'FAILED', completed_at = UTC_TIMESTAMP(6),

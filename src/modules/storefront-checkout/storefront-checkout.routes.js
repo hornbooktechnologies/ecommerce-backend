@@ -5,7 +5,7 @@ import { createStorefrontCheckoutService } from "./storefront-checkout.service.j
 const uuid = Joi.string().guid();
 export const checkoutSchemas = {
   options: Joi.object({ addressId: uuid.allow(null).default(null) }),
-  quote: Joi.object({ addressId: uuid.required(), deliverySlotId: uuid.required(),
+  quote: Joi.object({ addressId: uuid.required(),
     paymentMethod: Joi.string().valid("COD", "ONLINE_TEST").default("COD"),
     cartKey: Joi.string().pattern(/^[a-f0-9]{64}$/).required(), revision: Joi.number().integer().min(0).required(),
     couponCode: Joi.string().trim().uppercase().max(80).allow("").default(""),

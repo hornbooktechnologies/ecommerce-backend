@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createId } from "../src/core/identifiers/uuid.js";
-import { orderNotification, messages } from "../src/modules/notifications/order-notifications.events.js";
+import { automaticOrderEmailKinds, orderNotification, messages } from "../src/modules/notifications/order-notifications.events.js";
 import { createOrderNotificationWorker } from "../src/modules/notifications/order-notifications.service.js";
 import { notificationMessage, createOrderMailer } from "../src/modules/notifications/order-notifications.mail.js";
 import { enqueueOrderEvent, enqueueReturnEvent } from "../src/modules/notifications/order-notifications.dao.js";
@@ -11,6 +11,16 @@ const job = { id: createId(), tenantId: createId(), token: createId(), attempt: 
 const recipient = { email: "verified@example.invalid", storeName: "Hornbook\nRetail", tenantName: "Hornbook",
   tenantCode: "HORNBOOK_RETAIL", storeCode: "MAIN", orderNumber: "ORD-123", returnNumber: null };
 const settings = { origin: "https://shop.example.invalid", from: "mail@example.invalid" };
+
+test("purchase receipts distinguish COD and test payments and link to the customer's order", () => {
+  for (const [paymentMethod, label] of [["COD", /Cash on delivery/], ["ONLINE_TEST", /test mode \(no real charge\)/]]) {
+    const receipt = notificationMessage(job, { ...recipient, paymentMethod, total: "129.50", currency: "INR" }, settings);
+    assert.match(receipt.text, /Order total: ₹129\.50/);
+    assert.match(receipt.text, label);
+    assert.ok(receipt.text.includes(settings.origin + "/account/orders/" + job.payload.orderId));
+    assert.match(receipt.text, /not confirmation of payment/);
+  }
+});
 
 function worker({ nextJob = job, person = recipient, failure, ack = true } = {}) {
   const calls = { sent: [], finished: [] };
@@ -52,6 +62,25 @@ test("empty queue, ineligible recipient, and successful SMTP acceptance", async 
   assert.equal((await success.service.once("test")).status, "SUCCEEDED");
   assert.equal(success.calls.sent.length, 1);
   assert.equal(success.calls.finished.length, 1);
+});
+
+test("automatic lifecycle emails address the verified customer and identify the correct order and case", async () => {
+  const expected = ["ORDER_RECEIVED", "ORDER_CANCELLED", "SHIPMENT_DELIVERED", "RETURN_REQUESTED", "RETURN_APPROVED",
+    "RETURN_REJECTED", "RETURN_RECEIVED", "RETURN_INSPECTED", "RETURN_COMPLETED"];
+  assert.deepEqual(new Set(automaticOrderEmailKinds), new Set(expected));
+  for (const kind of expected) {
+    const isReturn = kind.startsWith("RETURN_");
+    const notification = { ...job, payload: { ...job.payload, kind, returnId: isReturn ? createId() : null } };
+    const person = { ...recipient, returnNumber: isReturn ? "RET-123" : null };
+    const { service, calls } = worker({ nextJob: notification, person });
+    assert.equal((await service.once("fake")).status, "SUCCEEDED");
+    assert.equal(calls.sent.length, 1);
+    const mail = notificationMessage(...calls.sent[0], settings);
+    assert.equal(mail.to.address, person.email);
+    assert.ok(mail.subject.includes(messages[kind][0]));
+    assert.ok(mail.text.includes(settings.origin + "/account/orders/" + notification.payload.orderId));
+    if (isReturn) assert.match(mail.text, /Case: RET-123/);
+  }
 });
 
 test("bounded retries redact SMTP error details, then stop at maximum attempts", async () => {

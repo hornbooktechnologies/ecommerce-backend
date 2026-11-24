@@ -38,7 +38,6 @@ export const createOrderSchema = Joi.object({
   storeId: uuid.required(),
   customer: customerSchema.required(),
   shippingAddress: addressSchema.required(),
-  deliverySlotId: uuid.allow(null, "").default(null),
   promotionId: uuid.allow(null, "").default(null),
   couponCode: Joi.string().trim().uppercase().max(80).allow("").default(""),
   items: Joi.array().items(Joi.object({

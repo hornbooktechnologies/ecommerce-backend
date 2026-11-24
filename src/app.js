@@ -15,6 +15,7 @@ import { createHealthRouter } from "./modules/health/health.routes.js";
 import { createPlatformTenantRouter } from "./modules/platform-tenants/platform-tenants.routes.js";
 import { createPlatformAccessRouter } from "./modules/platform-access/platform-access.routes.js";
 import { createPlatformDashboardRouter } from "./modules/platform-dashboard/platform-dashboard.routes.js";
+import { createPlatformAuditRouter } from "./modules/platform-audit/platform-audit.routes.js";
 import { createAccessControlRouter } from "./modules/access-control/access-control.routes.js";
 import { createCatalogRouter } from "./modules/catalog/catalog.routes.js";
 import { createInventoryRouter } from "./modules/inventory/inventory.routes.js";
@@ -143,6 +144,7 @@ export function createApp({
     res.set('Cache-Control', 'no-store').json({ data: resolveAppearance('admin') });
   });
   app.use("/api/platform/v1/dashboard", createPlatformDashboardRouter({ service: platformDashboardService }));
+  app.use("/api/platform/v1/audit-log", createPlatformAuditRouter());
   app.use('/api/admin/v1',createLocalizationRouter());
   app.use("/api/admin/v1/notifications", createInboxRouter({ audience: "ADMIN", service: inboxService, resolveTenant: tenantAccessResolver }));
   app.use("/api/vendor/v1/notifications", createInboxRouter({ audience: "VENDOR", service: inboxService, resolveVendor: vendorAccessResolver }));

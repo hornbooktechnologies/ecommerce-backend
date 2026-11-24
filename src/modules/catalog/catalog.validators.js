@@ -3,6 +3,8 @@ import { AppError } from "../../core/errors/app-error.js";
 
 const uuid = Joi.string().guid({ version: ["uuidv4", "uuidv5", "uuidv7"] });
 
+export const readinessQuery = Joi.object({storeId:uuid.optional()}).required();
+
 export const listProductsSchema = Joi.object({
   search: Joi.string().trim().max(190).allow("").default(""),
   status: Joi.string().uppercase().valid(
@@ -101,6 +103,7 @@ export const createProductSchema = Joi.object({
   taxCategoryId: optionalId,
   imageUrls: Joi.array().items(Joi.string().trim().uri({ scheme: ["http", "https"] }).max(500)).unique().max(6).default([]),
   shortDescription: Joi.string().trim().max(2000).allow("").default(""),
+  freeDelivery: Joi.boolean(),
   hsnSacCode: Joi.string().trim().max(20).allow("").default(""),
   countryOfOrigin: Joi.string().trim().uppercase().length(2).default("IN"),
   manufacturerName: Joi.string().trim().max(190).allow("").default(""),
@@ -167,6 +170,7 @@ export const updateProductSchema = Joi.object({
   taxCategoryId: optionalId,
   imageUrls: Joi.array().items(Joi.string().trim().uri({ scheme: ["http", "https"] }).max(500)).unique().max(6).default([]),
   shortDescription: Joi.string().trim().max(2000).allow("").default(""),
+  freeDelivery: Joi.boolean(),
   hsnSacCode: Joi.string().trim().max(20).allow("").default(""),
   countryOfOrigin: Joi.string().trim().uppercase().length(2).default("IN"),
   manufacturerName: Joi.string().trim().max(190).allow("").default(""),

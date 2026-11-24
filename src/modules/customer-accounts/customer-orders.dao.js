@@ -1,6 +1,7 @@
 import { bufferToUuid, uuidToBuffer as id } from "../../core/identifiers/uuid.js";
 import { getTaxDocumentDetail } from "../taxes/taxes.dao.js";
 import { deliveredItemSql } from "./customer-reviews.dao.js";
+import { cartOffers, wishlistProducts } from "../storefront/storefront.dao.js";
 
 const iso = (value) => value && Number.isFinite(new Date(value).getTime()) ? new Date(value).toISOString() : null;
 const json = (value) => { try { return typeof value === "string" ? JSON.parse(value) : value || {}; } catch { return {}; } };
@@ -51,7 +52,7 @@ export async function readOrder(args) {
     WHERE ${invoiceScope} ORDER BY td.document_date, td.id`, bindings);
   // Whitelist customer-facing columns. Never return internal notes, staff identities,
   // supplier information, warehouse details, or merchant payable amounts.
-  const [items] = await connection.execute(`SELECT i.id, i.product_name, i.variant_name, i.sku, i.quantity,
+  const [items] = await connection.execute(`SELECT i.id, i.offer_id, pv.product_id, i.product_name, i.variant_name, i.sku, i.quantity,
     i.unit_price, i.line_total, i.status, i.product_snapshot, m.display_name AS seller,
     (o.status NOT IN ('DRAFT', 'CANCELLED') AND i.status <> 'CANCELLED' AND ${deliveredItemSql}
       AND EXISTS (SELECT 1 FROM product_variants pv JOIN products p ON p.id = pv.product_id AND p.tenant_id = pv.tenant_id
@@ -60,6 +61,7 @@ export async function readOrder(args) {
     FROM order_items i JOIN customer_orders o ON o.id = i.customer_order_id AND o.tenant_id = i.tenant_id
     JOIN seller_orders so ON so.id = i.seller_order_id AND so.tenant_id = i.tenant_id
     JOIN merchants m ON m.id = so.merchant_id AND m.tenant_id = so.tenant_id
+    LEFT JOIN product_variants pv ON pv.id = i.variant_id AND pv.tenant_id = i.tenant_id
     LEFT JOIN product_ratings pr ON pr.tenant_id = i.tenant_id AND pr.customer_id = o.customer_id AND pr.order_item_id = i.id
     WHERE ${scope} ORDER BY i.created_at, i.id`, bindings);
   const [history] = await connection.execute(`SELECT h.id, h.status_type, h.new_status, h.changed_at
@@ -78,12 +80,26 @@ export async function readOrder(args) {
     JOIN delivery_slot_instances s ON s.id = r.delivery_slot_instance_id AND s.tenant_id = r.tenant_id
     WHERE ${scope} ORDER BY s.starts_at DESC LIMIT 1`, bindings);
   const address = json(row.shipping_address_snapshot);
-  return { order: summary(row),
+  const publicScope = {tenantId:args.tenantId,storeId:args.storeId,currency:args.currency || row.currency};
+  const unique = ids => [...new Set(ids.filter(Boolean))];
+  const offers = await cartOffers({scope:publicScope,connection,offerIds:unique(items.map(i=>bufferToUuid(i.offer_id)))});
+  const byOffer = new Map(offers.map(p=>[p.offerId,p]));
+  // If the old seller offer is gone, another public offer may still make the product page reachable.
+  const productIds = unique(items.filter(i=>!byOffer.has(bufferToUuid(i.offer_id))).map(i=>bufferToUuid(i.product_id)));
+  const products = await wishlistProducts({scope:publicScope,connection,productIds});
+  const byProduct = new Map(products.map(p=>[p.id,p]));
+  function presentation(item) {
+    const offer = byOffer.get(bufferToUuid(item.offer_id));
+    const product = offer || byProduct.get(bufferToUuid(item.product_id));
+    return {productSlug:product?.slug || null, publicOfferId:offer?.offerId || null,
+      imageUrl:json(item.product_snapshot).imageUrl || null, catalogImageUrl:product?.image || null};
+  }
+  return { order: { ...summary(row), expectedDeliveryDate:address.expectedDeliveryDate || null },
     invoices: invoices.map((entry) => ({ id: bufferToUuid(entry.id), number: entry.document_number,
       date: typeof entry.document_date === "string" ? entry.document_date.slice(0, 10) : iso(entry.document_date)?.slice(0, 10),
       total: Number(entry.grand_total), currency: entry.currency, seller: entry.seller })),
     address: Object.fromEntries(["contactName", "line1", "line2", "landmark", "city", "stateName", "postalCode", "countryCode"].map((key) => [key, address[key] || ""])),
-    items: items.map((item) => ({ id: bufferToUuid(item.id), productName: item.product_name, variantName: item.variant_name,
+    items: items.map((item) => ({ id: bufferToUuid(item.id), productName: item.product_name, variantName: item.variant_name, expectedDeliveryDate:json(item.product_snapshot).expectedDeliveryDate || null, ...presentation(item),
       sku: item.sku, quantity: Number(item.quantity), unitPrice: Number(item.unit_price), lineTotal: Number(item.line_total), status: item.status, seller: item.seller,
       substitution: json(item.product_snapshot).substitution?.original ? {
         originalProductName: json(item.product_snapshot).substitution.original.productName,

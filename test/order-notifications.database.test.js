@@ -63,14 +63,14 @@ test("MariaDB notification hooks, deduplication, retries, ownership, leases and 
     await insertReturnRequest({ record: { id: returnId, tenantId: scope.tenantId, orderId: fixture.orderId, sellerOrderId: fixture.sellerId,
       number: `MAIL-${returnId}`, type: "RETURN", reasonCode: "QUALITY", actorUserId: null }, connection });
     let sent = 0;
-    const worker = createOrderNotificationWorker({ dao: { claim: (name) => dao.claim(name, scopedPool),
+    const worker = createOrderNotificationWorker({ dao: { claim: (name) => dao.claim(name, scopedPool, true),
       recipient: (entry) => dao.recipient(entry, connection), finish: (entry, result) => dao.finish(entry, result, scopedPool) },
     mailer: { send: async (_job, person) => { assert.equal(person.returnNumber, `MAIL-${returnId}`); sent++; } } });
     assert.equal((await worker.once("fake-mailer")).status, "SUCCEEDED");
     assert.equal(sent, 1);
     await updateReturnStatus({ ...scope, returnId, fromStatus: "REQUESTED", toStatus: "REJECTED", connection });
     assert.equal(await updateReturnStatus({ ...scope, returnId, fromStatus: "REQUESTED", toStatus: "REJECTED", connection }), 0);
-    job = await dao.claim("test-worker-5", scopedPool);
+    job = await dao.claim("test-worker-5", scopedPool, true);
     assert.equal(job.payload.kind, "RETURN_REJECTED");
     await connection.execute("UPDATE background_jobs SET attempt_count = max_attempts, lock_expires_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE id = ?", [id(job.id)]);
     assert.equal(await dao.claim("test-worker-6", scopedPool), null);
@@ -84,6 +84,24 @@ test("MariaDB notification hooks, deduplication, retries, ownership, leases and 
     await connection.query("ROLLBACK TO SAVEPOINT rejected_event");
     const [[rolledBack]] = await connection.execute("SELECT COUNT(*) AS n FROM background_jobs WHERE deduplication_key = ?", [`ORDER_CANCELLED:${fixture.orderId}`]);
     assert.equal(Number(rolledBack.n), 0);
+    await connection.execute("UPDATE customers SET status = 'ACTIVE' WHERE id = ?", [id(customerId)]);
+    const fulfillmentId = createId();
+    for (const [type, payload, expected] of [
+      ["order.fulfillment.status-changed", { fulfillmentId, status: "DISPATCHED" }, null],
+      ["order.fulfillment.status-changed", { fulfillmentId, status: "COMPLETED" }, "SHIPMENT_DELIVERED"],
+      ["order.status.changed", { status: "CANCELLED" }, "ORDER_CANCELLED"]
+    ]) {
+      const args = { event: { ...event, type, payload }, connection };
+      await dao.enqueueOrderEvent(args);
+      await dao.enqueueOrderEvent(args);
+      const claimed = await dao.claim("automatic-worker", scopedPool, true);
+      if (expected) {
+        assert.equal(claimed.payload.kind, expected);
+        await dao.finish(claimed, { status: "SUCCEEDED" }, scopedPool);
+      } else assert.equal(claimed, null);
+      assert.equal(await dao.claim("automatic-worker", scopedPool, true), null);
+    }
+    assert.equal((await dao.claim("dedicated-worker", scopedPool)).payload.kind, "SHIPMENT_DISPATCHED");
     await connection.rollback();
     const [[persisted]] = await connection.execute("SELECT COUNT(*) AS n FROM customers WHERE id = ?", [id(customerId)]);
     assert.equal(Number(persisted.n), 0);

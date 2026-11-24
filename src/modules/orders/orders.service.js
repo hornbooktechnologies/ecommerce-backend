@@ -1,3 +1,5 @@
+import { deliveryAvailability as deliveryZone } from "../storefront/delivery-availability.dao.js";
+import { expectedDate } from "../storefront/delivery-availability.service.js";
 import { AppError } from "../../core/errors/app-error.js";
 import { createId } from "../../core/identifiers/uuid.js";
 import { isIntraStateSupply, normalizeGstStateCode } from "../../core/india/gst.js";
@@ -53,7 +55,7 @@ export function calculateIncludedTax(offer, quantity, grossAmount) {
 }
 
 export function createOrdersService({ dao = defaultDao, transaction = withTransaction,
-  financeService = defaultFinanceService } = {}) {
+  resolveZone = deliveryZone, financeService = defaultFinanceService } = {}) {
   async function resolveBundleComponents({ tenantId, bundleVariantId, merchantId, storeId,
     connection, path = [], multiplier = new Decimal(1) }) {
     if (path.includes(bundleVariantId)) {
@@ -188,25 +190,18 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
       }
       const subtotal = lines.reduce((total, line) => total.plus(line.listTotal), new Decimal(0));
       let discountTotal = lines.reduce((total, line) => total.plus(line.discountTotal), new Decimal(0));
-      const estimatedWeight = lines.reduce((total, line) => total.plus(line.estimatedWeight), new Decimal(0));
-      let deliverySlot = null;
-      let shippingTotal = new Decimal(0);
-      if (input.deliverySlotId) {
-        deliverySlot = await dao.findDeliverySlotForUpdate({ tenantId, storeId: store.id,
-          slotId: input.deliverySlotId, postalCode: input.shippingAddress.postalCode, connection });
-        if (!deliverySlot) fail("DELIVERY_SLOT_UNAVAILABLE", "The selected delivery slot is no longer available.", 409, "deliverySlotId");
-        if (deliverySlot.reservedOrders >= deliverySlot.orderCapacity) {
-          fail("DELIVERY_SLOT_FULL", "The selected delivery slot is full. Choose another slot.", 409, "deliverySlotId");
-        }
-        if (deliverySlot.hasPostalRules && !deliverySlot.postalSupported) {
-          fail("DELIVERY_POSTAL_CODE_UNSUPPORTED", "The selected slot does not serve this PIN code.", 422, "shippingAddress.postalCode");
-        }
-        if (deliverySlot.weightCapacity !== null
-          && new Decimal(deliverySlot.reservedWeight).plus(estimatedWeight).greaterThan(deliverySlot.weightCapacity)) {
-          fail("DELIVERY_SLOT_WEIGHT_FULL", "The selected slot has insufficient weight capacity.", 409, "deliverySlotId");
-        }
-        shippingTotal = new Decimal(deliverySlot.deliveryFee);
+      const zone = await resolveZone({ tenantId, storeId:store.id, postalCode:input.shippingAddress.postalCode, connection });
+      if (!zone) fail("DELIVERY_UNSUPPORTED", "Delivery is not available for this PIN code.", 422, "shippingAddress.postalCode");
+      const selling = lines.reduce((sum, line) => sum.plus(line.lineTotal), new Decimal(0));
+      if (selling.lt(zone.minimumOrderAmount || 0)) fail("CHECKOUT_DELIVERY_MINIMUM", `Delivery requires a subtotal of at least INR ${zone.minimumOrderAmount}.`, 422);
+      const shippingTotal = new Decimal(lines.every(line => line.freeDelivery === true) || (zone.freeDeliveryThreshold != null && selling.gte(zone.freeDeliveryThreshold)) ? 0 : zone.deliveryFee);
+      const now = new Date();
+      const sellerDates = new Map();
+      for (const line of lines) {
+        const date = expectedDate(zone.deliveryDays, line.handlingTimeHours, now);
+        if (!sellerDates.has(line.merchantId) || date > sellerDates.get(line.merchantId)) sellerDates.set(line.merchantId,date);
       }
+      const expectedDeliveryDate = [...sellerDates.values()].sort().at(-1);
       let customer = await dao.findCustomer({ tenantId, email: input.customer.email,
         phone: input.customer.phone, connection });
       if (!customer) {
@@ -273,10 +268,10 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
       const taxTotal = lines.reduce((total, line) => total.plus(line.taxTotal), new Decimal(0));
       const grandTotal = subtotal.minus(discountTotal).plus(shippingTotal);
       // Trusted internal callers share this calculation for review and creation.
-      const review = { currency: store.currency, subtotal: subtotal.toFixed(4), discountTotal: discountTotal.toFixed(4),
+      const review = { expectedDeliveryDate, currency: store.currency, subtotal: subtotal.toFixed(4), discountTotal: discountTotal.toFixed(4),
         shippingTotal: shippingTotal.toFixed(4), taxTotal: taxTotal.toFixed(4), grandTotal: grandTotal.toFixed(4),
         promotionDiscount: promotionDiscount.toFixed(4),
-        items: lines.map((line) => ({ offerId: line.offerId, productName: line.productName, variantName: line.variantName,
+        items: lines.map((line) => ({ expectedDeliveryDate:sellerDates.get(line.merchantId), offerId: line.offerId, productName: line.productName, variantName: line.variantName,
           sku: line.sku, quantity: line.quantity, unitPrice: new Decimal(line.salePrice).toFixed(4),
           lineTotal: line.lineTotal.toFixed(4), taxTotal: line.taxTotal.toFixed(4), soldByWeight: line.soldByWeight })) };
       if (context.preview) return review;
@@ -291,10 +286,10 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
         phone: input.customer.phone || null };
       await dao.insertOrder({ order: {
         id: orderId, tenantId, storeId: store.id, customerId: customer.id, source,
-        deliverySlotId: deliverySlot?.id || null, number: orderNumber, currency: store.currency,
+        deliverySlotId: null, number: orderNumber, currency: store.currency,
         subtotal: subtotal.toFixed(4), discountTotal: discountTotal.toFixed(4),
         shippingTotal: shippingTotal.toFixed(4), taxTotal: taxTotal.toFixed(4),
-        grandTotal: grandTotal.toFixed(4), billingAddress: address, shippingAddress: address,
+        grandTotal: grandTotal.toFixed(4), billingAddress: address, shippingAddress: { ...address, expectedDeliveryDate },
         customerSnapshot: { name: address.contactName, email: input.customer.email || null,
           phone: input.customer.phone || null }, customerNotes: input.customerNotes,
         internalNotes: input.internalNotes, actorUserId: context.actorUserId
@@ -303,10 +298,6 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
         id: createId(), tenantId, promotionId: promotion.id, couponId: promotion.coupon?.id || null,
         orderId, customerId: customer.id, discountAmount: promotionDiscount.toFixed(4)
       }, connection });
-      if (deliverySlot) {
-        await dao.reserveDeliverySlot({ tenantId, slot: { ...deliverySlot, reservationId: createId() },
-          orderId, weight: estimatedWeight.toFixed(6), connection });
-      }
       const groups = new Map();
       for (const line of lines) {
         if (!groups.has(line.merchantId)) groups.set(line.merchantId, []);
@@ -345,7 +336,7 @@ export function createOrdersService({ dao = defaultDao, transaction = withTransa
             cessRate: line.cessRate.toFixed(6), cessAmount: line.cessAmount.toFixed(4),
             taxTotal: line.taxTotal.toFixed(4), lineTotal: line.lineTotal.toFixed(4),
             substitutionPreference: line.substitutionPreference,
-            productSnapshot: { imageUrl: line.imageUrl, vertical: line.vertical,
+            productSnapshot: { expectedDeliveryDate:sellerDates.get(merchantId), imageUrl: line.imageUrl, vertical: line.vertical,
               merchantName: line.merchantName, availableQuantityAtOrder: line.availableQuantity,
               productKind: line.productKind || "STANDARD",
               bundleComponents: line.bundleComponents?.map((component) => ({

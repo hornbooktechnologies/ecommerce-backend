@@ -18,6 +18,9 @@ export function createCatalogController(service = defaultService) {
       const product = await service.createProduct(tenantId(req), req.validated.body, actorContext(req));
       res.status(201).json({ data: { product } });
     },
+    async productReadiness(req, res) {
+      res.json({data:await service.productReadiness(tenantId(req), req.validated.params.productId, req.validated.query.storeId)});
+    },
     async getProductVariants(req, res) {
       res.json({ data: await service.getProductVariants(
         tenantId(req), req.validated.params.productId

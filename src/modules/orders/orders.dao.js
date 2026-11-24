@@ -1,3 +1,4 @@
+import { qualifiesForFreeDelivery } from "../storefront/free-delivery.js";
 import { getPrimaryPool } from "../../database/pool-factory.js";
 import { enqueueOrderEvent } from "../notifications/order-notifications.dao.js";
 import { bufferToUuid, uuidToBuffer } from "../../core/identifiers/uuid.js";
@@ -45,14 +46,14 @@ function orderRow(row) {
 
 export async function listCreationOptions({ tenantId, connection = getPrimaryPool() }) {
   const tenant = uuidToBuffer(tenantId);
-  const [storeResult, offerResult, slotResult, promotionResult] = await Promise.all([
+  const [storeResult, offerResult, zoneResult, promotionResult] = await Promise.all([
     connection.execute(
       `SELECT s.id, s.code, s.name, s.base_currency
          FROM stores s WHERE s.tenant_id = ? AND s.status = 'ACTIVE' AND s.deleted_at IS NULL
         ORDER BY s.created_at`, [tenant]),
     connection.execute(
       `SELECT so.id, so.store_id, so.merchant_id, m.display_name AS merchant_name,
-              so.variant_id, p.name AS product_name, pv.name AS variant_name, pv.sku,
+              p.free_delivery, delivery_tenant.free_delivery_above_inr, so.handling_time_hours, so.variant_id, p.name AS product_name, pv.name AS variant_name, pv.sku,
               COALESCE(NULLIF(p.hsn_sac_code, ''), NULLIF(tc.hsn_sac_code, '')) AS hsn_sac_code,
               tr.igst_rate AS gst_rate, tr.cess_rate, tr.cess_amount,
               (SELECT gr2.gstin FROM gst_registrations gr2
@@ -75,6 +76,7 @@ export async function listCreationOptions({ tenantId, connection = getPrimaryPoo
          FROM seller_offers so JOIN merchants m ON m.id = so.merchant_id
          JOIN product_variants pv ON pv.id = so.variant_id AND pv.status = 'ACTIVE' AND pv.deleted_at IS NULL
          JOIN products p ON p.id = pv.product_id AND p.deleted_at IS NULL
+       JOIN tenants delivery_tenant ON delivery_tenant.id=p.tenant_id AND delivery_tenant.id=so.tenant_id
          JOIN product_types pt ON pt.id = p.product_type_id AND pt.deleted_at IS NULL
          LEFT JOIN tax_categories tc ON tc.id = p.tax_category_id AND tc.status = 'ACTIVE'
          LEFT JOIN tax_rates tr ON tr.id = (
@@ -91,19 +93,9 @@ export async function listCreationOptions({ tenantId, connection = getPrimaryPoo
         WHERE so.tenant_id = ? AND so.status <> 'ARCHIVED' AND so.deleted_at IS NULL
         ORDER BY p.name, pv.sku`, [tenant]),
     connection.execute(
-      `SELECT dsi.id, dz.store_id, dz.id AS delivery_zone_id, dz.name AS zone_name,
-              dsi.starts_at, dsi.ends_at, dsi.order_capacity, dsi.reserved_orders,
-              dsi.weight_capacity, dsi.reserved_weight, dz.delivery_fee,
-              GROUP_CONCAT(dzpc.postal_code ORDER BY dzpc.postal_code SEPARATOR ',') AS postal_codes
-         FROM delivery_slot_instances dsi JOIN delivery_zones dz ON dz.id = dsi.delivery_zone_id
-         LEFT JOIN delivery_zone_postal_codes dzpc ON dzpc.delivery_zone_id = dz.id
-          AND dzpc.status = 'ACTIVE'
-        WHERE dsi.tenant_id = ? AND dsi.status = 'OPEN' AND dz.status = 'ACTIVE'
-          AND dsi.starts_at > UTC_TIMESTAMP() AND dsi.reserved_orders < dsi.order_capacity
-        GROUP BY dsi.id, dz.store_id, dz.id, dz.name, dsi.starts_at, dsi.ends_at,
-          dsi.order_capacity, dsi.reserved_orders, dsi.weight_capacity, dsi.reserved_weight,
-          dz.delivery_fee
-        ORDER BY dsi.starts_at LIMIT 100`, [tenant]),
+      `SELECT dz.store_id,dz.delivery_days,dz.delivery_fee,dz.free_delivery_threshold,
+        GROUP_CONCAT(p.postal_code) AS postal_codes FROM delivery_zones dz LEFT JOIN delivery_zone_postal_codes p
+        ON p.delivery_zone_id=dz.id AND p.status='ACTIVE' WHERE dz.tenant_id=? AND dz.status='ACTIVE' GROUP BY dz.id`, [tenant]),
     connection.execute(
       `SELECT p.id, p.store_id, p.name, p.promotion_type, p.conditions_json, p.actions_json,
               (SELECT COUNT(*) FROM coupons c WHERE c.promotion_id = p.id AND c.status = 'ACTIVE'
@@ -126,7 +118,8 @@ export async function listCreationOptions({ tenantId, connection = getPrimaryPoo
       variantName: offer.variant_name, sku: offer.sku, productKind: offer.product_kind,
       vertical: offer.vertical,
       soldByWeight: Boolean(offer.sold_by_weight),
-      minimumOrderQuantity: number(offer.minimum_order_quantity) || 1,
+      freeDelivery: qualifiesForFreeDelivery(offer),
+      handlingTimeHours:Number(offer.handling_time_hours || 0), minimumOrderQuantity: number(offer.minimum_order_quantity) || 1,
       maximumOrderQuantity: number(offer.maximum_order_quantity),
       quantityStep: number(offer.quantity_step) || 1,
       estimatedWeight: number(offer.estimated_weight), listPrice: number(offer.list_price),
@@ -140,16 +133,9 @@ export async function listCreationOptions({ tenantId, connection = getPrimaryPoo
         !offer.seller_gstin && "Seller GST registration required"].filter(Boolean),
       taxConfigured: Boolean(offer.hsn_sac_code && offer.gst_rate !== null && offer.seller_gstin)
     })),
-    deliverySlots: slotResult[0].map((slot) => ({
-      id: bufferToUuid(slot.id), storeId: bufferToUuid(slot.store_id),
-      zoneId: bufferToUuid(slot.delivery_zone_id), zoneName: slot.zone_name,
-      startsAt: iso(slot.starts_at), endsAt: iso(slot.ends_at),
-      availableOrders: Number(slot.order_capacity) - Number(slot.reserved_orders),
-      availableWeight: slot.weight_capacity === null ? null
-        : number(slot.weight_capacity) - number(slot.reserved_weight),
-      deliveryFee: number(slot.delivery_fee) || 0,
-      postalCodes: slot.postal_codes ? slot.postal_codes.split(",") : []
-    })),
+    deliveryZones: zoneResult[0].map(row => ({ storeId:bufferToUuid(row.store_id), deliveryDays:Number(row.delivery_days),
+      deliveryFee:Number(row.delivery_fee), freeDeliveryThreshold:number(row.free_delivery_threshold),
+      postalCodes:row.postal_codes ? row.postal_codes.split(',') : [] })),
     promotions: promotionResult[0].map((promotion) => {
       const conditions = json(promotion.conditions_json, {}); const actions = json(promotion.actions_json, {});
       return { id: bufferToUuid(promotion.id), storeId: bufferToUuid(promotion.store_id), name: promotion.name,
@@ -179,7 +165,7 @@ export async function findOffersForOrder({ tenantId, storeId, offerIds, destinat
   const placeholders = offerIds.map(() => "?").join(", ");
   const [rows] = await connection.execute(
     `SELECT so.id, so.store_id, so.merchant_id, so.variant_id, so.seller_sku,
-            so.minimum_order_quantity AS offer_minimum_quantity,
+            p.free_delivery, delivery_tenant.free_delivery_above_inr, so.handling_time_hours, so.minimum_order_quantity AS offer_minimum_quantity,
             so.maximum_order_quantity AS offer_maximum_quantity,
             m.display_name AS merchant_name, m.merchant_type,
             p.name AS product_name, p.product_kind,
@@ -198,6 +184,7 @@ export async function findOffersForOrder({ tenantId, storeId, offerIds, destinat
        FROM seller_offers so JOIN merchants m ON m.id = so.merchant_id
        JOIN product_variants pv ON pv.id = so.variant_id AND pv.deleted_at IS NULL
        JOIN products p ON p.id = pv.product_id AND p.deleted_at IS NULL
+       JOIN tenants delivery_tenant ON delivery_tenant.id=p.tenant_id AND delivery_tenant.id=so.tenant_id
        JOIN product_types pt ON pt.id = p.product_type_id AND pt.deleted_at IS NULL
        LEFT JOIN tax_categories tc ON tc.id = p.tax_category_id AND tc.status = 'ACTIVE'
        LEFT JOIN tax_rates tr ON tr.id = (
@@ -240,7 +227,8 @@ export async function findOffersForOrder({ tenantId, storeId, offerIds, destinat
     igstRate: number(row.igst_rate), cessRate: number(row.cess_rate) || 0,
     cessAmount: number(row.cess_amount) || 0,
     soldByWeight: Boolean(row.sold_by_weight),
-    minimumOrderQuantity: number(row.offer_minimum_quantity) || number(row.minimum_order_quantity) || 1,
+    freeDelivery: qualifiesForFreeDelivery(row),
+    handlingTimeHours:Number(row.handling_time_hours || 0), minimumOrderQuantity: number(row.offer_minimum_quantity) || number(row.minimum_order_quantity) || 1,
     maximumOrderQuantity: number(row.offer_maximum_quantity) || number(row.maximum_order_quantity),
     quantityStep: number(row.quantity_step) || 1, estimatedWeight: number(row.estimated_weight),
     listPrice: number(row.list_price), salePrice: number(row.sale_price),

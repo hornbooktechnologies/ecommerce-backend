@@ -58,6 +58,30 @@ test("DAO applies all three ownership boundaries and deterministic pagination", 
   assert.equal(await orderDao.readOrder({ ...store, customerId, orderId, connection }), null);
   assert.equal(queries.length, 1, "foreign/missing order stops before fetching any detail");
 });
+test("owned order lines link only to public offers or products, and retain historical photos", async () => {
+  const ids = Array.from({length:9},createId);
+  const items = [0,1,2].map(n=>({id:uuidToBuffer(ids[n]),offer_id:uuidToBuffer(ids[n+3]),
+    product_id:uuidToBuffer(ids[n+6]),product_name:"Purchased item",product_snapshot:{imageUrl:n===1?null:"/images/original.webp"}}));
+  const queries=[];
+  const connection={
+    execute:async sql=>[sql.includes("o.shipping_address_snapshot")?[{id:uuidToBuffer(orderId),currency:"INR"}]:
+      sql.includes("SELECT i.id, i.offer_id")?items:[]],
+    query:async(sql,params)=>{
+      queries.push(sql);
+      assert.deepEqual(params.slice(0,3),["INR",uuidToBuffer(store.tenantId),uuidToBuffer(store.storeId)]);
+      const n=queries.length===1?0:1;
+      return [[{id:items[n].product_id,offer_id:items[n].offer_id,slug:"public-"+n,image_url:"/images/current.webp"}]];
+    }
+  };
+  const data=await orderDao.readOrder({...store,customerId,orderId,connection});
+  assert.equal(queries.length,2);
+  assert.deepEqual(data.items.map(i=>[i.productSlug,i.publicOfferId,i.imageUrl,i.catalogImageUrl]),[
+    ["public-0",ids[3],"/images/original.webp","/images/current.webp"],
+    ["public-1",null,null,"/images/current.webp"],
+    [null,null,"/images/original.webp",null]
+  ]);
+});
+
 test("customer projection omits internal notes, staff and seller financial information", async () => {
   const row = { id: uuidToBuffer(orderId), status: "PLACED", shipping_address_snapshot: JSON.stringify({ line1: "Safe road", secret: "DO_NOT_EXPOSE" }),
     internal_notes: "DO_NOT_EXPOSE", merchant_payable_total: "DO_NOT_EXPOSE", changed_by_name: "DO_NOT_EXPOSE" };
